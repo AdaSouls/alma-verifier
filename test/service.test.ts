@@ -385,6 +385,48 @@ describe("over MCP and HTTP", () => {
     expect(status).toBe(403);
   });
 
+  it("a browser page is answered only from an origin it was told about, and still needs the token", async () => {
+    const forge = "https://forge.example";
+    const { base, post, project: dir } = await setup({ token: "s3cret", allowedOrigins: [forge], project: () => ({ folder: "shop" }) });
+    const auth = { authorization: "Bearer s3cret" };
+
+    // The browser's question before the real request: no token, nothing runs.
+    const preflight = await fetch(`${base}/v1/verify`, { method: "OPTIONS", headers: { origin: forge, "access-control-request-method": "POST", "access-control-request-headers": "authorization, content-type" } });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin")).toBe(forge);
+    expect(preflight.headers.get("access-control-allow-headers")).toContain("authorization");
+
+    const allowed = await post("/v1/verify", { projectDir: dir }, { ...auth, origin: forge });
+    expect(allowed.status).toBe(200);
+    expect(allowed.headers.get("access-control-allow-origin")).toBe(forge);
+    expect(await (await fetch(`${base}/v1/project`, { headers: { ...auth, origin: forge } })).json()).toEqual({ folder: "shop" });
+
+    // The right origin without the token, and the token from another page: neither gets in.
+    expect((await post("/v1/verify", { projectDir: dir }, { origin: forge })).status).toBe(401);
+    const other = await post("/v1/verify", { projectDir: dir }, { ...auth, origin: "https://evil.example" });
+    expect(other.status).toBe(403);
+    expect(other.headers.get("access-control-allow-origin")).toBeNull();
+    expect((await fetch(`${base}/v1/verify`, { method: "OPTIONS", headers: { origin: "https://evil.example" } })).status).toBe(403);
+  });
+
+  it("a link's code is traded for the token once, and only the right one", async () => {
+    let left = true;
+    const { post, project: dir } = await setup({ token: "s3cret", exchange: (code) => (left && code === "one-time" ? ((left = false), "s3cret") : undefined) });
+    expect((await post("/v1/session", { code: "guess" })).status).toBe(401);
+    expect((await post("/v1/session", {})).status).toBe(400);
+    const traded = await post("/v1/session", { code: "one-time" });
+    expect(await traded.json()).toEqual({ token: "s3cret" });
+    expect((await post("/v1/session", { code: "one-time" })).status).toBe(401);
+    expect((await post("/v1/verify", { projectDir: dir }, { authorization: "Bearer s3cret" })).status).toBe(200);
+  });
+
+  it("with no origin allowed, no page is answered, and there is no project to describe", async () => {
+    const { base, post, project: dir } = await setup();
+    expect((await post("/v1/verify", { projectDir: dir }, { origin: "https://forge.example" })).status).toBe(403);
+    expect((await fetch(`${base}/v1/project`)).status).toBe(404);
+    expect((await post("/v1/session", { code: "x" })).status).toBe(404);
+  });
+
   it("serves the same tools over streamable HTTP, with the caller's key", async () => {
     const { base, project: dir } = await setup();
     const client = new Client({ name: "test", version: "0" });

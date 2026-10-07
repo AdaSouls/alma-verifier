@@ -12,6 +12,8 @@ import { InputError, NotConfigured, NotFound, UpstreamError, type CheckInput, ty
  *   POST /v1/check         { almaId | projectDir, amount, asset, to, capability?, chain?, counterparty? }
  *   POST /v1/explain       { reportId | report, question? }
  *   GET  /v1/reports/:id
+ *   GET  /v1/project       (only when started for one project, as `forge` does)
+ *   POST /v1/session       { code }   (only with `exchange`: a one-time code for the token)
  *   GET  /.well-known/alma-verifier-keys
  *
  * It speaks plain HTTP: put it behind TLS before exposing it. A caller's
@@ -27,6 +29,24 @@ export interface HttpOptions {
    * by pointing its own domain at 127.0.0.1.
    */
   allowedHosts?: string[];
+  /**
+   * The web origins whose pages may call this server from a browser
+   * (e.g. "https://forge.adasouls.io"). Unset: none, and a browser
+   * can't read an answer. With it set, a request that names any other
+   * origin is refused before anything runs, so a page the user happens
+   * to visit can't make this server act; set `token` as well, since an
+   * origin is only what a browser says it is.
+   */
+  allowedOrigins?: string[];
+  /** What this server was started for, when it serves one project: what `GET /v1/project` answers. */
+  project?: () => unknown;
+  /**
+   * Turns a one-time code into the token (`POST /v1/session`), or
+   * returns undefined. For a page opened by a link: the link then
+   * carries the code, which is worth nothing once used, and never the
+   * token itself.
+   */
+  exchange?: (code: string) => string | undefined;
 }
 
 const MAX_BODY = 256 * 1024;
@@ -92,6 +112,7 @@ function checkInput(b: Record<string, unknown>): CheckInput {
 export function createHttpServer(verifier: Verifier, options: HttpOptions = {}): Server {
   const expected = options.token ? digest(options.token) : undefined;
   const hosts = options.allowedHosts?.map((h) => h.toLowerCase());
+  const origins = options.allowedOrigins;
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (hosts && !hosts.includes((req.headers.host ?? "").toLowerCase())) throw new HttpError(403, "this server doesn't answer to that host name");
@@ -102,11 +123,37 @@ export function createHttpServer(verifier: Verifier, options: HttpOptions = {}):
       throw new HttpError(400, "bad request");
     }
 
+    const origin = req.headers.origin;
+    if (origin !== undefined) {
+      if (!origins?.includes(origin)) throw new HttpError(403, "this server doesn't answer to pages from that origin");
+      res.setHeader("access-control-allow-origin", origin);
+      res.setHeader("vary", "Origin");
+    }
+    if (req.method === "OPTIONS") {
+      // A browser's question before the real request. It carries no token, and nothing runs.
+      if (origin === undefined) throw new HttpError(405, "method not allowed");
+      res.writeHead(204, {
+        "access-control-allow-methods": "GET, POST",
+        "access-control-allow-headers": "authorization, content-type",
+        // Asked by browsers before a public page may call an address on this machine.
+        "access-control-allow-private-network": "true",
+        "access-control-max-age": "600",
+      });
+      res.end();
+      return;
+    }
+
     if (req.method === "GET" && path === "/healthz") return send(res, 200, { ok: true });
     if (req.method === "GET" && path === "/.well-known/alma-verifier-keys") {
       // Published for convenience. A reader who needs to trust a report should get this key some other way than from the server that signed it.
       const issuer = verifier.issuer;
       return send(res, 200, issuer ? { iss: issuer.iss, keys: [{ kid: issuer.kid, alg: "Ed25519", publicKey: issuer.publicKey }] } : { keys: [] });
+    }
+
+    if (req.method === "POST" && path === "/v1/session" && options.exchange) {
+      const token = options.exchange(required(await readJson(req), "code"));
+      if (!token) throw new HttpError(401, "that code was already used, or has expired");
+      return send(res, 200, { token });
     }
 
     if (expected) {
@@ -132,6 +179,8 @@ export function createHttpServer(verifier: Verifier, options: HttpOptions = {}):
       await transport.handleRequest(req, res, await readJson(req));
       return;
     }
+
+    if (req.method === "GET" && path === "/v1/project" && options.project) return send(res, 200, options.project());
 
     const report = /^\/v1\/reports\/([^/]+)$/.exec(path);
     if (req.method === "GET" && report) return send(res, 200, verifier.report(report[1]));

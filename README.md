@@ -198,6 +198,41 @@ enforces them.
   `--rpc eip155:84532=https://sepolia.base.org --allowance-module eip155:84532=0xModule…`.
   A caller never supplies a URL.
 
+## In ALMA Forge
+
+```
+npx @adasouls/alma-verifier forge
+```
+
+Verifies the agent in this folder and opens the result in
+[ALMA Forge](https://forge.adasouls.io), a web page that shows the
+report and, while the command keeps running, lets you verify again, try
+a payment against the limits, and ask for an explanation. It takes the
+same `--wallet`, `--signer`, `--custody-signs`, `--rpc`,
+`--allowance-module` and `--simulate` options as `doctor`.
+
+The checks still run here. The command starts a server on `127.0.0.1`
+(the first free port from 8790, or `--port`) for this project only, and
+the page in your browser talks to it:
+
+- It answers one web origin, Forge's (`--forge-url`, or
+  `ALMA_FORGE_URL`; it warns when that isn't the default), and only
+  requests that carry a token made for this run. Both are needed:
+  another site you have open can't use it.
+- The link carries a code the page trades for that token, once, within
+  ten minutes. The token itself is never in the link, so it doesn't sit
+  in the process list or the browser's history. If something else on the
+  machine used the code first, the page can't connect and says so: run
+  the command again.
+- The code, and a copy of the first report, travel in the part of the
+  link after `#`, which a browser never sends to a web server. Forge's
+  own server sees neither.
+- Stop the command and none of it is worth anything.
+
+Some browsers won't let a web page call the machine it runs on. The
+report in the link still shows; the buttons that need this machine
+don't work there. `--no-open` prints the link instead of opening it.
+
 ## Over HTTP
 
 ```

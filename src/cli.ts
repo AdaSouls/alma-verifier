@@ -1,7 +1,11 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer as createTcpServer } from "node:net";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { gzipSync } from "node:zlib";
 import Anthropic from "@anthropic-ai/sdk";
 import { AdaSouls } from "@adasouls/sdk";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -272,6 +276,154 @@ service(
     if (!token) console.error(yellow("  no token set: anyone who can reach this address can use it"));
   });
 });
+
+// ---------- Forge: this project's verifier, driven from a browser ----------
+
+const DEFAULT_FORGE_URL = "https://forge.adasouls.io";
+
+/** Hands a link to the system's browser. Best effort: the link is printed too. */
+function openInBrowser(url: string): void {
+  const [command, args] = process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? ["rundll32", ["url.dll,FileProtocolHandler", url]] : ["xdg-open", [url]];
+  try {
+    const child = spawn(command, args, { stdio: "ignore", detached: true });
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    // No browser to hand it to: the printed link is enough.
+  }
+}
+
+/** The first port from `from` on that nothing on this machine is listening on. */
+async function freePort(from: number): Promise<number> {
+  for (let port = from; port < from + 50; port++) {
+    const free = await new Promise<boolean>((done) => {
+      const probe = createTcpServer();
+      probe.once("error", () => done(false));
+      // No address: every interface, so a server bound to all of them counts as taken too.
+      probe.listen(port, () => probe.close(() => done(true)));
+    });
+    if (free) return port;
+  }
+  throw new Error(`no free port between ${from} and ${from + 49}: pass one with --port`);
+}
+
+interface ForgeFlags {
+  cwd: string;
+  wallet?: string;
+  signer?: string;
+  custodySigns?: boolean;
+  rpc?: string;
+  allowanceModule?: string;
+  simulate?: string;
+  assets?: string;
+  explainer?: boolean;
+  model?: string;
+  port?: string;
+  forgeUrl: string;
+  open: boolean;
+}
+
+program
+  .command("forge")
+  .description("Verify the agent in this project and open the result in ALMA Forge. The checks run here; the page in your browser talks to this machine only.")
+  .option("--cwd <dir>", "the project's folder", ".")
+  .option("--wallet <address>", "the address the agent's funds are at")
+  .option("--signer <address>", "an address whose key the agent's runtime holds")
+  .option("--custody-signs", "a custody service signs for the agent, which holds no key")
+  .option("--rpc <url>", "a JSON-RPC endpoint of the wallet's chain (read-only calls)")
+  .option("--allowance-module <address>", "the Safe Allowance Module's address on that chain")
+  .option("--simulate <file>", "read custody from a simulated chain described in a JSON file")
+  .option("--assets <file>", "extra tokens: a JSON list of { symbol, chain, id, decimals }")
+  .option("--explainer", "explain reports with a Claude model (on by default when ANTHROPIC_API_KEY is set)")
+  .option("--model <id>", `the Claude model that explains (default ${DEFAULT_MODEL}, or ALMA_VERIFIER_MODEL)`)
+  .option("--port <port>", "the local port Forge talks to (default: the first free one from 8790)")
+  .option("--forge-url <url>", "where Forge is served (or ALMA_FORGE_URL)", process.env.ALMA_FORGE_URL || DEFAULT_FORGE_URL)
+  .option("--no-open", "print the link instead of opening the browser")
+  .action(async (o: ForgeFlags) => {
+    const cwd = resolve(o.cwd);
+    if (o.port !== undefined && !(Number.isInteger(Number(o.port)) && Number(o.port) >= 1 && Number(o.port) <= 65535)) throw new Error("--port: a number between 1 and 65535");
+    const forge = new URL(o.forgeUrl);
+    // Said out loud: this origin is the one page that will be allowed to use the server below.
+    if (forge.origin !== new URL(DEFAULT_FORGE_URL).origin) console.error(yellow(`! Forge is taken to be at ${forge.origin}, not ${DEFAULT_FORGE_URL} (--forge-url or ALMA_FORGE_URL). That page will be able to use this verifier.`));
+    if (forge.protocol !== "https:" && !["localhost", "127.0.0.1"].includes(forge.hostname)) throw new Error("--forge-url: an https address (or one on this machine)");
+
+    // The chain is whichever one the endpoint answers for: read from it, never typed in.
+    let chain: string | undefined;
+    const chains: NonNullable<VerifierOptions["chains"]> = {};
+    const simulated = o.simulate ? (JSON.parse(readFileSync(o.simulate, "utf-8")) as SimulatedState) : undefined;
+    if (simulated) chain = new SimulatedChain(simulated).chain;
+    else if (o.rpc) {
+      chain = (await evmReader({ rpcUrl: o.rpc, allowanceModule: o.allowanceModule })).chain;
+      chains[chain] = { rpcUrl: o.rpc, allowanceModule: o.allowanceModule };
+    }
+    if (o.wallet && !chain) throw new Error("--wallet needs a chain to read it from: --rpc, or --simulate for a simulated one");
+
+    const identity = readIdentity(cwd);
+    const signer = identity ? await loadSigner(cwd) : undefined;
+    const withModel = o.explainer ?? Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+    const verifier = new Verifier({
+      chains,
+      simulated,
+      projectRoot: cwd,
+      // Signed with the project's own key, as `doctor --sign` does: it says what this machine found.
+      ...(identity && signer ? { signer, issuer: localIssuer(identity.id) } : {}),
+      assets: o.assets ? (JSON.parse(readFileSync(o.assets, "utf-8")) as AssetInfo[]) : undefined,
+      explainer: withModel ? { client: new Anthropic({ timeout: 120_000, maxRetries: 1 }), model: o.model ?? process.env.ALMA_VERIFIER_MODEL ?? DEFAULT_MODEL } : undefined,
+    });
+
+    const target = { projectDir: ".", ...(o.wallet ? { walletAddress: o.wallet, chain } : {}), ...(o.signer ? { agentSigner: o.signer } : {}), ...(o.custodySigns ? { custodySigns: true } : {}) };
+    /** What Forge shows next to the report. Read again on each request, so an edited alma.yaml shows after the next run. */
+    const project = () => {
+      const manifest = readManifest(cwd);
+      return {
+        folder: basename(cwd),
+        agent: readIdentity(cwd)?.id ?? null,
+        target,
+        /** The chain payments are tried on, when one is known. */
+        chain: chain ?? null,
+        declared: manifest ? { capabilities: manifest.capabilities ?? [], authority: manifest.authority ?? {}, counterpartyPolicy: manifest.counterpartyPolicy ?? null } : null,
+        signer: verifier.issuer ?? null,
+        explainer: withModel,
+      };
+    };
+
+    const first = await verifier.verify(target);
+    console.log(render(first.report));
+    const port = o.port !== undefined ? Number(o.port) : await freePort(8790);
+
+    // One token per run, known to this process and to the page it opens. Nothing else can use the server.
+    const token = randomBytes(24).toString("base64url");
+    // The link doesn't carry the token: a link handed to a browser shows in this machine's process list.
+    // It carries a code the page trades for the token, once. A code somebody else used first leaves
+    // the page unable to connect, which is noticed.
+    const code = randomBytes(24).toString("base64url");
+    const sha = (s: string) => createHash("sha256").update(s).digest();
+    let codeLeft = true;
+    const codeUntil = Date.now() + 10 * 60_000;
+    const exchange = (given: string) => {
+      if (!codeLeft || Date.now() > codeUntil || !timingSafeEqual(sha(given), sha(code))) return undefined;
+      codeLeft = false;
+      return token;
+    };
+    const server = createHttpServer(verifier, { token, allowedHosts: [`127.0.0.1:${port}`], allowedOrigins: [forge.origin], project, exchange });
+    server.on("error", (err: NodeJS.ErrnoException) => {
+      console.error(`${red("✗")} ${err.code === "EADDRINUSE" ? `port ${port} is in use: pass another with --port` : err.message}`);
+      process.exit(1);
+    });
+    server.listen(port, "127.0.0.1", () => {
+      // After the "#": a browser keeps that part to itself, so neither the token nor the report reaches Forge's server.
+      const at = `${forge.origin}${forge.pathname.replace(/\/$/, "")}/#`;
+      const connection = { local: `http://127.0.0.1:${port}`, code };
+      const short = at + new URLSearchParams(connection).toString();
+      // The browser's link also carries this first report, so the page shows it even where a browser won't let a page call this machine.
+      const link = at + new URLSearchParams({ ...connection, r: gzipSync(JSON.stringify({ stored: first, project: project() })).toString("base64url") }).toString();
+      console.log(`${bold("Open in ALMA Forge")}  ${short}`);
+      console.log(dim(`\n  Forge runs in your browser and talks to this machine at 127.0.0.1:${port}. Your files and keys stay here.`));
+      console.log(dim("  The link works once, within ten minutes: don't share it. Keep this running to verify again or try"));
+      console.log(dim("  payments from the page. Ctrl+C to stop.\n"));
+      if (o.open) openInBrowser(link);
+    });
+  });
 
 /**
  * Text a model wrote, made safe to print next to the verifier's own
