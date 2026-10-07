@@ -1,0 +1,48 @@
+{
+  "name": "@adasouls/alma-verifier",
+  "version": "0.0.0",
+  "description": "Will this agent obey its soul? Deterministic checks of an AI agent's ALMA identity, authority, limits and custody, with a verdict on what actually enforces them.",
+  "license": "MIT",
+  "homepage": "https://github.com/AdaSouls/alma-verifier#readme",
+  "keywords": ["alma", "adasouls", "ai-agents", "agent-payments", "verification", "safe"],
+  "type": "module",
+  "bin": {
+    "alma-verifier": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./guard": { "types": "./dist/guard/index.d.ts", "import": "./dist/guard/index.js" },
+    "./adapters": { "types": "./dist/adapters/index.d.ts", "import": "./dist/adapters/index.js" }
+  },
+  "files": ["dist", "docs"],
+  "engines": { "node": ">=20" },
+  "repository": { "type": "git", "url": "https://github.com/AdaSouls/alma-verifier.git" },
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "npm run build && changeset publish"
+  },
+  "dependencies": {
+    "@adasouls/alma-core": "^0.7.0",
+    "@adasouls/alma-manifest": "^0.2.1",
+    "@adasouls/policy-engine": "^0.1.4",
+    "commander": "^12.1.0",
+    "viem": "^2.57.0"
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "^0.7.0",
+    "@changesets/cli": "^2.31.1",
+    "@types/node": "^22.7.0",
+    "eslint": "^9.39.0",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^2.1.0"
+  }
+}
