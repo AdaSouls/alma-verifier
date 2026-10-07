@@ -171,9 +171,11 @@ the report, and check `scope` to see what the verification looked at.
 ## Limits of this verifier
 
 - The EVM reader follows the published Safe and Allowance Module
-  interfaces and has not yet been run against a deployed Safe. Until it
-  has, treat a `CHAIN-ENFORCED` it reports from a live chain as
-  unconfirmed.
+  interfaces. It has been run against one deployed Safe, 1-of-1 with the
+  module enabled, on Base Sepolia (2026-10-07): it reported
+  `CHAIN-ENFORCED`, and the module then reverted a transfer over the
+  allowance it had read. A Safe with several owners, other modules or a
+  guard has not been read from a live chain.
 - The simulated chain is a model of the module's documented behaviour,
   not its bytecode.
 - Whether an agent's code actually calls the guard can't be observed
