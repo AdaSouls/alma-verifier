@@ -89,6 +89,8 @@ export interface HistoryFacts {
  */
 export interface Facts {
   identity?: AlmaIdentity;
+  /** True when the source of the identity doesn't say which wallets are bound to it: IDN-03 is then "unknown", never a pass. */
+  controllersUnknown?: boolean;
   delegations: Delegation[];
   /** The agent's declared limits (alma.yaml). */
   manifest?: AgentManifest;

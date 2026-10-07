@@ -21,9 +21,10 @@ It runs on your machine. Your code, keys and files are not uploaded
 anywhere; reading a chain uses read-only RPC calls to an endpoint you
 choose.
 
-> Status: first release, not yet published to npm. The EVM reader has not
-> been run against a deployed Safe yet; everything else here is covered
-> by the test suite.
+> Status: first release, not yet published to npm. Two things have not
+> been run for real yet: the EVM reader against a deployed Safe, and the
+> explainer against the Claude API (its contract is tested with a
+> stand-in model). Everything else here is covered by the test suite.
 
 ## Verify an agent
 
@@ -128,23 +129,128 @@ npx @adasouls/alma-verifier verify-report .alma/verification.json \
 A report signed with a project's own key says what that machine found.
 Get the public key from the signer, not from the report.
 
+## Explain a report
+
+```
+npx @adasouls/alma-verifier doctor --out report.json
+npx @adasouls/alma-verifier explain report.json --question "What do I fix first?"
+```
+
+A Claude model puts the report in plain language and orders the fixes.
+It needs `ANTHROPIC_API_KEY`; the model is `claude-opus-5` unless
+`--model` or `ALMA_VERIFIER_MODEL` says otherwise. This is the only
+part of the tool that sends anything anywhere: the report, and your
+`alma.yaml` when the report is about this project.
+
+**The model explains. It never decides.**
+
+- The verdict, the failed checks and the fix for each one come from the
+  report. The model's answer supplies the wording, the order, and any
+  extra concern.
+- It can add a concern. It cannot drop a finding: every failed check is
+  in the result whether the model mentioned it or not.
+- It has no tools.
+- Names, memos and anything else an agent controls reach it as quoted
+  data, with instructions not to follow them.
+- A corrected `alma.yaml` it drafts is shown only if it parses and
+  loosens nothing: no higher limit, no new asset or capability, no
+  counterparty rule removed. Nothing is written to your files.
+
+So a model that has been talked into something can produce a wrong
+explanation, and nothing else. No explanation is needed to use a report.
+
+## For AI clients: MCP
+
+```json
+{
+  "mcpServers": {
+    "alma-verifier": { "command": "npx", "args": ["-y", "@adasouls/alma-verifier", "mcp"] }
+  }
+}
+```
+
+| Tool | |
+|---|---|
+| `alma_verify_agent` | `almaId` or `projectDir`, plus `walletAddress`, `chain`, `agentSigner`, `custodySigns`. Returns the report. |
+| `alma_check_intent` | `almaId` or `projectDir`, `amount`, `asset`, `to`, and optionally `capability`, `chain`, `counterparty`. Returns `pass`, `fail` or `requires_approval` with reasons. |
+| `alma_explain` | `reportId` or `report`, and optionally `question`. |
+
+All three only read. `alma_check_intent` approves nothing: it says what
+the limits would say, and the payment still has to go through whatever
+enforces them.
+
+- `projectDir` is read under `--project-root` (the folder the server was
+  started in, by default) and nowhere else.
+- `almaId` asks an ALMA provider, with `ADASOULS_API_KEY` (and
+  `ADASOULS_API_URL` for a self-hosted one). The provider doesn't say
+  which wallets are bound to an identity, and its receipts aren't read
+  yet, so `IDN-03` and the history checks report "unknown" this way.
+  For `alma_check_intent` the answer is the provider's own, since only
+  it knows what the agent spent through it today.
+- Chains are read from the endpoints given at start-up:
+  `--rpc eip155:84532=https://sepolia.base.org --allowance-module eip155:84532=0xModule…`.
+  A caller never supplies a URL.
+
+## Over HTTP
+
+```
+npx @adasouls/alma-verifier serve --port 8787 \
+  --rpc eip155:84532=https://sepolia.base.org --allowance-module eip155:84532=0xModule…
+```
+
+| | |
+|---|---|
+| `POST /v1/verify` | The same input as `alma_verify_agent`. Returns `{ id, report, envelope }`. |
+| `POST /v1/check` | The same input as `alma_check_intent`. |
+| `POST /v1/explain` | `{ reportId }` or `{ report }`, and optionally `question`. |
+| `GET /v1/reports/:id` | A report this server produced. |
+| `GET /.well-known/alma-verifier-keys` | The key it signs with. |
+| `POST /mcp` | The MCP tools over streamable HTTP. |
+
+Reports are signed with the server's own Ed25519 key (`--key`, made on
+first run), in the same envelope as `doctor --sign`, so one that is
+forwarded can be checked with `verify-report`. The key is published at
+the well-known path for convenience; someone who needs to rely on a
+report should get it from the operator some other way.
+
+What to know before running it for others:
+
+- It listens on `127.0.0.1` and answers only to this machine's host
+  names. To listen elsewhere it requires `--token` (or
+  `ALMA_VERIFIER_TOKEN`), sent as `Authorization: Bearer …`.
+- It speaks plain HTTP. Put it behind TLS.
+- Local projects are off unless `--project-root` is given.
+- To verify by `almaId`, a caller sends their own provider key in
+  `X-AdaSouls-Key`. It is used for that request and not kept.
+- Who holds an agent's key (`agentSigner`, `custodySigns`) is the
+  caller's statement, and the report's sources say so. A
+  `CUSTODY-ENFORCED` verdict obtained this way is only as good as that
+  statement.
+- There is no rate limiting, and explanations cost money: keep the
+  token on.
+
 ## As a library
 
 ```ts
-import { verify, checkIntent } from "@adasouls/alma-verifier";
-import { readProject, readCustody, SimulatedChain } from "@adasouls/alma-verifier/adapters";
+import { verify, checkIntent, Verifier } from "@adasouls/alma-verifier";
+import { readProject, readAgent, readCustody, SimulatedChain } from "@adasouls/alma-verifier/adapters";
 
 const report = await verify({ ...(await readProject(process.cwd())), custody });
 ```
 
 `verify(facts)` is a pure function: adapters gather facts, checks only
-read them.
+read them. `readAgent(adasouls.agent(id))` gathers them from an ALMA
+provider through the AdaSouls SDK. `Verifier` is what the MCP and HTTP
+servers call.
 
 ## Not here yet
 
-- MCP and HTTPS interfaces, and plain-language explanations of a report.
-- Reading identity, delegations and custody from a hosted ALMA provider.
-- A run against a deployed Safe.
+- A run against a deployed Safe, and a run of the explainer against the
+  Claude API.
+- From an ALMA provider: an identity's bound wallets, and its receipts.
+- Drafts of the Safe transactions that set allowances. They belong with
+  the tool that compiles `alma.yaml` into them, so that code and not a
+  model writes what an owner signs.
 
 ## Development
 

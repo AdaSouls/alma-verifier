@@ -61,6 +61,7 @@ function identity(f: Facts): CheckResult[] {
   const wallet = f.custody?.wallet;
   if (!id) idn03 = result("IDN-03", "The wallet address is a bound controller of this soul", "high", "na", "No identity to check.");
   else if (!wallet) idn03 = result("IDN-03", "The wallet address is a bound controller of this soul", "high", "unknown", "No wallet address was given to verify.");
+  else if (f.controllersUnknown) idn03 = result("IDN-03", "The wallet address is a bound controller of this soul", "high", "unknown", "Where this identity was read from doesn't say which wallets are bound to it.");
   else {
     const bound = id.controllers.some((c) => c.type === "wallet" && same(c.value, wallet));
     idn03 = result("IDN-03", "The wallet address is a bound controller of this soul", "high", bound ? "pass" : "fail", bound ? `${wallet} is bound to the identity.` : `${wallet} is not among the identity's wallet controllers: nothing ties these funds to this soul.`);

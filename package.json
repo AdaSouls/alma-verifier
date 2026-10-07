@@ -4,7 +4,14 @@
   "description": "Will this agent obey its soul? Deterministic checks of an AI agent's ALMA identity, authority, limits and custody, with a verdict on what actually enforces them.",
   "license": "MIT",
   "homepage": "https://github.com/AdaSouls/alma-verifier#readme",
-  "keywords": ["alma", "adasouls", "ai-agents", "agent-payments", "verification", "safe"],
+  "keywords": [
+    "alma",
+    "adasouls",
+    "ai-agents",
+    "agent-payments",
+    "verification",
+    "safe"
+  ],
   "type": "module",
   "bin": {
     "alma-verifier": "./dist/cli.js"
@@ -12,14 +19,33 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./guard": { "types": "./dist/guard/index.d.ts", "import": "./dist/guard/index.js" },
-    "./adapters": { "types": "./dist/adapters/index.d.ts", "import": "./dist/adapters/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./guard": {
+      "types": "./dist/guard/index.d.ts",
+      "import": "./dist/guard/index.js"
+    },
+    "./adapters": {
+      "types": "./dist/adapters/index.d.ts",
+      "import": "./dist/adapters/index.js"
+    }
   },
-  "files": ["dist", "docs"],
-  "engines": { "node": ">=20" },
-  "repository": { "type": "git", "url": "https://github.com/AdaSouls/alma-verifier.git" },
-  "publishConfig": { "access": "public" },
+  "files": [
+    "dist",
+    "docs"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AdaSouls/alma-verifier.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "eslint .",
@@ -33,8 +59,12 @@
     "@adasouls/alma-core": "^0.7.0",
     "@adasouls/alma-manifest": "^0.2.1",
     "@adasouls/policy-engine": "^0.1.4",
+    "@adasouls/sdk": "^0.4.0",
+    "@anthropic-ai/sdk": "^0.131.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "commander": "^12.1.0",
-    "viem": "^2.57.0"
+    "viem": "^2.57.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.7.0",

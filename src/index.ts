@@ -5,3 +5,7 @@ export * from "./core/verdict.js";
 export * from "./core/report.js";
 export * from "./core/intent.js";
 export { FIXES } from "./core/remediation.js";
+export * from "./service.js";
+export * from "./explainer/index.js";
+export { createMcpServer } from "./mcp/server.js";
+export { createHttpServer, type HttpOptions } from "./http/server.js";
