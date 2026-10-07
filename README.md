@@ -21,11 +21,10 @@ It runs on your machine. Your code, keys and files are not uploaded
 anywhere; reading a chain uses read-only RPC calls to an endpoint you
 choose.
 
-> Status: early releases, on npm as `@adasouls/alma-verifier`. One thing
-> has not been run for real yet: the EVM reader against a Safe that has
-> the Allowance Module enabled (it has read a real Safe without one on
-> Base Sepolia). Everything else here is covered by the test suite, and
-> the explainer has been run against the Claude API.
+> Status: early releases, on npm as `@adasouls/alma-verifier`. Covered by
+> the test suite, and run for real: the EVM reader against a Safe with
+> the Allowance Module enabled on Base Sepolia (one 1-of-1 Safe, see
+> `docs/ENFORCEMENT.md`), and the explainer against the Claude API.
 
 ## Verify an agent
 
@@ -254,7 +253,6 @@ servers call.
 
 ## Not here yet
 
-- A run against a Safe with the Allowance Module enabled.
 - From an ALMA provider: an identity's bound wallets, and its receipts.
 - Drafts of the Safe transactions that set allowances are not written
   by the model. `apply-limits` in adasouls-engine compiles `alma.yaml`
