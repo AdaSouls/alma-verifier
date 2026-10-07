@@ -19,7 +19,7 @@ import { KNOWN_ASSETS, type AssetInfo } from "./core/assets.js";
 import { declaredRules } from "./core/checks.js";
 import { signReport, verify, verifySignedReport, type SignedReport } from "./core/report.js";
 import { VERDICTS, type CheckResult, type Facts, type Report, type Verdict } from "./core/types.js";
-import { DEFAULT_MODEL, explain, plainReport, type Explanation } from "./explainer/index.js";
+import { DEFAULT_MODEL, LANGUAGES, explain, plainReport, type Explanation } from "./explainer/index.js";
 import { check } from "./guard/index.js";
 import { createHttpServer } from "./http/server.js";
 import { createMcpServer } from "./mcp/server.js";
@@ -436,7 +436,11 @@ const fromModel = (s: string, indent = "  ") => s.replace(/[\u0000-\u0008\u000b-
 function renderExplanation(e: Explanation): string {
   const lines = ["", `${bold("Verdict")}  ${bold(e.verdict)}  ${dim("(computed by the checks, not by the model)")}`, `         ${e.meaning}`];
   for (const notice of e.notices) lines.push("", yellow(`! ${notice}`));
-  lines.push("", bold("Explanation"), fromModel(e.explanation));
+  if (e.plain) {
+    lines.push("", bold("In short"), fromModel(e.plain.inShort));
+    for (const [title, text] of [["Can the agent spend more than was allowed?", e.plain.canOverspend], ["What actually stops it?", e.plain.whatStopsIt], ["What could still go wrong?", e.plain.whatCouldGoWrong], ["What to do next", e.plain.whatToDo]]) lines.push("", bold(title), fromModel(text));
+  }
+  lines.push("", bold(e.plain ? "For the developer" : "Explanation"), fromModel(e.explanation));
   if (e.fixes.length) {
     lines.push("", bold("Fix in this order"));
     e.fixes.forEach((f, i) => {
@@ -456,9 +460,11 @@ program
   .description("Explain a report in plain language, with the fixes in order. Uses a Claude model (ANTHROPIC_API_KEY); the verdict is never the model's.")
   .option("--cwd <dir>", "the project's folder", ".")
   .option("--question <text>", "what you want to know")
+  .option("--language <code>", "the language to write in: en (default), es or pt")
   .option("--model <id>", `the Claude model to use (default ${DEFAULT_MODEL}, or ALMA_VERIFIER_MODEL)`)
   .option("--json", "print the explanation as JSON")
-  .action(async (file: string | undefined, o: { cwd: string; question?: string; model?: string; json?: boolean }) => {
+  .action(async (file: string | undefined, o: { cwd: string; question?: string; language?: string; model?: string; json?: boolean }) => {
+    if (o.language !== undefined && !Object.hasOwn(LANGUAGES, o.language)) throw new Error(`--language: one of ${Object.keys(LANGUAGES).join(", ")}`);
     const cwd = resolve(o.cwd);
     const path = file ?? join(storeDir(cwd), "verification.json");
     if (!existsSync(path)) throw new Error(`${path} not found: run \`alma-verifier doctor --out <file>\` (or --sign) first`);
@@ -467,7 +473,7 @@ program
     if (!report) throw new Error(`${path} is not a verification report`);
     // The project's limits are sent along only when the report is about this project's agent.
     const manifest = report.subject && readIdentity(cwd)?.id === report.subject ? readManifest(cwd) : undefined;
-    const explanation = await explain(new Anthropic(), { report, manifest, question: o.question }, o.model ?? process.env.ALMA_VERIFIER_MODEL ?? DEFAULT_MODEL);
+    const explanation = await explain(new Anthropic(), { report, manifest, question: o.question, language: o.language }, o.model ?? process.env.ALMA_VERIFIER_MODEL ?? DEFAULT_MODEL);
     console.log(o.json ? JSON.stringify(explanation, null, 2) : renderExplanation(explanation));
   });
 

@@ -10,7 +10,7 @@ import { InputError, NotConfigured, NotFound, UpstreamError, type CheckInput, ty
  *
  *   POST /v1/verify        { almaId | projectDir, walletAddress?, chain?, agentSigner?, custodySigns? }
  *   POST /v1/check         { almaId | projectDir, amount, asset, to, capability?, chain?, counterparty? }
- *   POST /v1/explain       { reportId | report, question? }
+ *   POST /v1/explain       { reportId | report, question?, language? }
  *   GET  /v1/reports/:id
  *   GET  /v1/project       (only when started for one project, as `forge` does)
  *   POST /v1/session       { code }   (only with `exchange`: a one-time code for the token)
@@ -189,7 +189,7 @@ export function createHttpServer(verifier: Verifier, options: HttpOptions = {}):
     if (req.method === "POST" && path === "/v1/check") return send(res, 200, await verifier.check(checkInput(await readJson(req)), apiKey));
     if (req.method === "POST" && path === "/v1/explain") {
       const body = await readJson(req);
-      return send(res, 200, await verifier.explain({ reportId: str(body, "reportId", 64), report: body.report, question: str(body, "question", 2000) }));
+      return send(res, 200, await verifier.explain({ reportId: str(body, "reportId", 64), report: body.report, question: str(body, "question", 2000), language: str(body, "language", 8) }));
     }
     throw new HttpError(404, "not found");
   };
