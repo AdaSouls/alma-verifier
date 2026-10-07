@@ -154,7 +154,9 @@ describe("the verifier as a service", () => {
     const verifier = new Verifier({ agent: (_id, key) => (keys.push(key), provider()), apiKey: "default-key", simulated: { accounts: { [WALLET]: { kind: "eoa" } } }, assets });
     const { report } = await verifier.verify({ almaId: "alma:main:agent:shopper", walletAddress: WALLET, chain: CHAIN, custodySigns: true }, "callers-key");
     expect(keys).toEqual(["callers-key"]);
-    expect(report.verdict).toBe("CUSTODY-ENFORCED");
+    // The provider doesn't say which wallets are the agent's, so custody that looks right still can't raise the verdict.
+    expect(report.rings.find((r) => r.ring === 2)!.state).toBe("in place");
+    expect(report.verdict).toBe("ADVISORY");
     await verifier.verify({ almaId: "alma:main:agent:shopper" });
     expect(keys[1]).toBe("default-key");
     await expect(new Verifier({ agent: () => provider() }).verify({ almaId: "x" })).rejects.toThrow("API key");

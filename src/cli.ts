@@ -34,6 +34,9 @@ export function render(report: Report): string {
   if (report.scope.wallet) lines.push(`${bold("Wallet")}   ${report.scope.wallet} on ${report.scope.chain}`);
   lines.push("", bold("What stands between this agent and the funds"));
   for (const ring of report.rings) lines.push(`  Ring ${ring.ring}  ${ring.name}: ${ring.state === "in place" ? green(ring.state) : ring.state === "unknown" ? yellow("can't be seen from here") : red(ring.state)}  ${dim(`(stops ${ring.stops})`)}`);
+  if (report.verdict === "ADVISORY" && report.rings.some((r) => r.ring > 1 && r.state === "in place")) {
+    lines.push("", yellow("  This wallet is protected, but it isn't shown to be this agent's (IDN-03), so the verdict stays ADVISORY."));
+  }
   for (const [prefix, name] of GROUPS) {
     lines.push("", bold(name));
     for (const c of report.checks.filter((c) => c.id.startsWith(prefix))) {

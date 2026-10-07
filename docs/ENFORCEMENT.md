@@ -34,11 +34,24 @@ The verdict is the highest ring **actually in place**, computed like this
 and in this order:
 
 1. `UNCONNECTED` unless IDN-01 and AUT-01 pass.
-2. `CHAIN-ENFORCED` when CUS-03 passes, CUS-02 and CUS-04 don't fail, and
+2. `ADVISORY` unless IDN-03 passes: the wallet that was looked at must be
+   a bound controller of the agent's identity. A well-protected wallet
+   says nothing about an agent it doesn't belong to; without this, an
+   agent could be verified against somebody else's Safe.
+3. `CHAIN-ENFORCED` when CUS-03 passes, CUS-02 and CUS-04 don't fail, and
    CUS-05 passes.
-3. `CUSTODY-ENFORCED` when the agent holds no signer, a custody service
+4. `CUSTODY-ENFORCED` when the agent holds no signer, a custody service
    signs, and CUS-05 doesn't fail.
-4. `ADVISORY` otherwise.
+5. `ADVISORY` otherwise.
+
+The rings in a report describe the wallet that was looked at, whoever it
+belongs to; the verdict is about the agent. So a report can show ring 3
+in place and still say `ADVISORY`: that wallet is protected, and it
+hasn't been shown to be this agent's.
+
+A binding today is the identity naming the wallet. It is not yet a
+signature from that wallet, so it shows that the agent claims the
+wallet, not that the wallet's owners accept the agent.
 
 A check that couldn't be run is `unknown`, and `unknown` never counts in
 the agent's favour. No wallet given, an RPC endpoint that doesn't answer,

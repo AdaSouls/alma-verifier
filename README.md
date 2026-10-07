@@ -37,7 +37,10 @@ npx @adasouls/alma-verifier doctor
 ```
 
 With nothing else, the best it can say is `ADVISORY`: it has seen the
-limits, not where the money is. Tell it:
+limits, not where the money is. Tell it, and make sure the wallet is
+bound to the agent's identity (`alma connect --wallet 0xSafe…`): a
+wallet that isn't the agent's can't raise its verdict, however well it
+is protected.
 
 ```
 npx @adasouls/alma-verifier doctor \
@@ -186,7 +189,9 @@ enforces them.
 - `almaId` asks an ALMA provider, with `ADASOULS_API_KEY` (and
   `ADASOULS_API_URL` for a self-hosted one). The provider doesn't say
   which wallets are bound to an identity, and its receipts aren't read
-  yet, so `IDN-03` and the history checks report "unknown" this way.
+  yet, so `IDN-03` and the history checks report "unknown" this way,
+  and since an unbound wallet can't raise a verdict, an agent looked up
+  by id reads `ADVISORY` at most for now.
   For `alma_check_intent` the answer is the provider's own, since only
   it knows what the agent spent through it today.
 - Chains are read from the endpoints given at start-up:
@@ -225,9 +230,10 @@ What to know before running it for others:
 - To verify by `almaId`, a caller sends their own provider key in
   `X-AdaSouls-Key`. It is used for that request and not kept.
 - Who holds an agent's key (`agentSigner`, `custodySigns`) is the
-  caller's statement, and the report's sources say so. A
-  `CUSTODY-ENFORCED` verdict obtained this way is only as good as that
-  statement.
+  caller's statement, and the report's sources say so. A verdict
+  obtained this way is only as good as that statement. Which wallet is
+  the agent's is not the caller's to state: it has to be bound to the
+  identity.
 - There is no rate limiting, and explanations cost money: keep the
   token on.
 
