@@ -22,9 +22,11 @@ anywhere; reading a chain uses read-only RPC calls to an endpoint you
 choose.
 
 > Status: first release, not yet published to npm. Two things have not
-> been run for real yet: the EVM reader against a deployed Safe, and the
-> explainer against the Claude API (its contract is tested with a
-> stand-in model). Everything else here is covered by the test suite.
+> been run for real yet: the EVM reader against a Safe that has the
+> Allowance Module enabled (it has read a real Safe without one on Base
+> Sepolia), and the explainer against the Claude API (its contract is
+> tested with a stand-in model). Everything else here is covered by the
+> test suite.
 
 ## Verify an agent
 
@@ -245,12 +247,12 @@ servers call.
 
 ## Not here yet
 
-- A run against a deployed Safe, and a run of the explainer against the
-  Claude API.
+- A run against a Safe with the Allowance Module enabled, and a run of
+  the explainer against the Claude API.
 - From an ALMA provider: an identity's bound wallets, and its receipts.
-- Drafts of the Safe transactions that set allowances. They belong with
-  the tool that compiles `alma.yaml` into them, so that code and not a
-  model writes what an owner signs.
+- Drafts of the Safe transactions that set allowances are not written
+  by the model. `apply-limits` in adasouls-engine compiles `alma.yaml`
+  into them, so that code writes what an owner signs.
 
 ## Development
 
