@@ -32,8 +32,8 @@ export function tightest(sets: ManifestSelfPolicyRules[]): ManifestSelfPolicyRul
     for (const key of AMOUNT_KEYS) {
       for (const [asset, amount] of Object.entries(rules[key] ?? {})) {
         const current = out[key]?.[asset];
-        // An amount that can't be read is kept as it is: the checks report it, and nothing here guesses what it meant.
-        const keep = current === undefined || !isAmount(current) || (isAmount(amount) && compare(amount, current) === -1) ? amount : current;
+        // An amount that can't be read is kept, whichever set it came from: the checks then report it, where dropping it would hide it behind a readable one.
+        const keep = current === undefined ? amount : !isAmount(current) ? current : !isAmount(amount) ? amount : compare(amount, current) === -1 ? amount : current;
         out[key] = { ...out[key], [asset]: keep };
       }
     }

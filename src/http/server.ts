@@ -95,8 +95,12 @@ export function createHttpServer(verifier: Verifier, options: HttpOptions = {}):
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (hosts && !hosts.includes((req.headers.host ?? "").toLowerCase())) throw new HttpError(403, "this server doesn't answer to that host name");
-    const url = new URL(req.url ?? "/", "http://verifier");
-    const path = url.pathname;
+    let path: string;
+    try {
+      path = new URL(req.url ?? "/", "http://verifier").pathname;
+    } catch {
+      throw new HttpError(400, "bad request");
+    }
 
     if (req.method === "GET" && path === "/healthz") return send(res, 200, { ok: true });
     if (req.method === "GET" && path === "/.well-known/alma-verifier-keys") {

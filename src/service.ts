@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { canonicalJsonValue, type IssuerSigner } from "@adasouls/alma-core";
 import type { AgentManifest } from "@adasouls/alma-manifest";
@@ -12,8 +12,8 @@ import { SimulatedChain, type SimulatedState } from "./adapters/simulated.js";
 import { KNOWN_ASSETS, type AssetInfo } from "./core/assets.js";
 import { declaredRules } from "./core/checks.js";
 import { signReport, verify, type SignedReport } from "./core/report.js";
-import { REPORT_VERSION, VERDICTS, type Facts, type Report } from "./core/types.js";
-import { ExplainerUnavailable, explain, type ExplainerClient, type Explanation } from "./explainer/index.js";
+import type { Facts, Report } from "./core/types.js";
+import { ExplainerUnavailable, explain, plainReport, type ExplainerClient, type Explanation } from "./explainer/index.js";
 import { check } from "./guard/index.js";
 
 /**
@@ -102,14 +102,10 @@ const CHAIN = /^[-a-z0-9]{3,8}:[-_a-zA-Z0-9]{1,32}$/;
 const REPORT_ID = /^[a-f0-9]{64}$/;
 const MAX_KEPT = 500;
 
-/** Enough of a report's shape to explain one a caller sent. It is still the caller's word, and is labelled so. */
-function looksLikeReport(value: unknown): value is Report {
-  const r = value as Report;
-  return (
-    typeof r === "object" && r !== null && r.v === REPORT_VERSION && (VERDICTS as readonly string[]).includes(r.verdict) && typeof r.meaning === "string" && Array.isArray(r.rings) &&
-    Array.isArray(r.checks) && r.checks.every((c) => typeof c?.id === "string" && typeof c.title === "string" && typeof c.status === "string" && typeof c.detail === "string")
-  );
-}
+const inside = (root: string, path: string) => path === root || path.startsWith(root + sep);
+const NO_PROJECT = "no such project folder among the ones this verifier may read";
+/** The files a project is read from. Each must really be inside it: a link that leads elsewhere is refused, not followed. */
+const PROJECT_FILES = ["alma.yaml", ".alma", ".alma/identity.json", ".alma/delegations.json", ".alma/receipts.jsonl", ".alma/log.json", ".alma/issuer.key"];
 
 export class Verifier {
   private readonly kept = new Map<string, StoredReport & { manifest?: AgentManifest }>();
@@ -132,12 +128,22 @@ export class Verifier {
 
   private project(dir: string): string {
     if (!this.options.projectRoot) throw new NotConfigured("this verifier doesn't read local projects; give it an agent's ALMA id");
-    const root = realpathSync(this.options.projectRoot);
+    let root: string;
+    try {
+      root = realpathSync(this.options.projectRoot);
+    } catch {
+      throw new NotConfigured("this verifier's project folder is not available");
+    }
+    // The path as written is checked before the disk is touched, and one answer covers "outside" and "not there": a caller learns nothing about what else exists on this machine.
     const target = resolve(root, dir);
-    if (!existsSync(target)) throw new InputError("no such project folder");
+    if (!inside(root, target) || !existsSync(target)) throw new InputError(NO_PROJECT);
     const real = realpathSync(target);
     const rel = relative(root, real);
-    if (rel.startsWith("..") || isAbsolute(rel)) throw new InputError("that folder is outside the projects this verifier may read");
+    if (rel.startsWith("..") || isAbsolute(rel)) throw new InputError(NO_PROJECT);
+    for (const file of PROJECT_FILES) {
+      const path = join(real, file);
+      if (existsSync(path) && !inside(real, realpathSync(path))) throw new InputError("the project has files that lead outside it; they are not read");
+    }
     return real;
   }
 
@@ -195,7 +201,8 @@ export class Verifier {
         project = await readProject(this.project(target.projectDir), this.now());
       } catch (err) {
         if (err instanceof InputError || err instanceof NotConfigured) throw err;
-        throw new InputError(err instanceof Error ? err.message : "the project couldn't be read");
+        // Not the error's own text: it names paths on this machine, and a parser's can quote what it read.
+        throw new InputError("the project's files (alma.yaml, .alma/) couldn't be read as an ALMA project; run `alma-verifier doctor` in it for the detail");
       }
       facts = { ...project, assets: this.assets() };
       sources.push("project files (alma.yaml, .alma/)");
@@ -264,7 +271,13 @@ export class Verifier {
     const target = this.target(input);
     if ("projectDir" in target) {
       if (!input.chain || !CHAIN.test(input.chain)) throw new InputError("say which chain the payment is on, as a CAIP-2 id (e.g. eip155:84532)");
-      const decision = check({ to: input.to, asset: input.asset, amount: input.amount, chain: input.chain, counterparty: input.counterparty, capability: input.capability }, { cwd: this.project(target.projectDir), assets: this.options.assets, now: this.options.now });
+      const cwd = this.project(target.projectDir);
+      let decision: ReturnType<typeof check>;
+      try {
+        decision = check({ to: input.to, asset: input.asset, amount: input.amount, chain: input.chain, counterparty: input.counterparty, capability: input.capability }, { cwd, assets: this.options.assets, now: this.options.now });
+      } catch {
+        throw new InputError("the project's files (alma.yaml, .alma/) couldn't be read as an ALMA project; run `alma-verifier doctor` in it for the detail");
+      }
       const decidedBy = "the limits in this project, evaluated here" as const;
       if (decision.decision === "allow") return { outcome: "pass", reasons: [], approvals: [], decidedBy };
       if (decision.decision === "needs_approval") return { outcome: "requires_approval", reasons: [], approvals: decision.approvals, decidedBy };
@@ -293,8 +306,9 @@ export class Verifier {
       if (!found) throw new NotFound("no report with that id");
       ({ report, manifest } = found);
       reportFrom = "this verifier";
-    } else if (looksLikeReport(input.report)) {
-      report = input.report;
+    } else if (plainReport(input.report)) {
+      // Rebuilt from a report's own fields: whatever else the caller sent doesn't reach the model.
+      report = plainReport(input.report)!;
       reportFrom = "the caller, not checked";
     } else throw new InputError("give a report id, or a report");
     try {

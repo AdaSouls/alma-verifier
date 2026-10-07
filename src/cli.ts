@@ -15,7 +15,7 @@ import { KNOWN_ASSETS, type AssetInfo } from "./core/assets.js";
 import { declaredRules } from "./core/checks.js";
 import { signReport, verify, verifySignedReport, type SignedReport } from "./core/report.js";
 import { VERDICTS, type CheckResult, type Facts, type Report, type Verdict } from "./core/types.js";
-import { DEFAULT_MODEL, explain, type Explanation } from "./explainer/index.js";
+import { DEFAULT_MODEL, explain, plainReport, type Explanation } from "./explainer/index.js";
 import { check } from "./guard/index.js";
 import { createHttpServer } from "./http/server.js";
 import { createMcpServer } from "./mcp/server.js";
@@ -192,7 +192,8 @@ function pairs(values: string[], flag: string): Record<string, string> {
   return out;
 }
 
-function serviceOptions(o: ServiceFlags): VerifierOptions {
+/** `ownKey`: use this process's ADASOULS_API_KEY for callers who send none. Right for one person's local MCP server, never for a server others can call. */
+function serviceOptions(o: ServiceFlags, ownKey: boolean): VerifierOptions {
   const rpc = pairs(o.rpc, "--rpc");
   const modules = pairs(o.allowanceModule, "--allowance-module");
   for (const chain of Object.keys(modules)) if (!rpc[chain]) throw new Error(`--allowance-module names ${chain}, and no --rpc was given for it`);
@@ -204,9 +205,9 @@ function serviceOptions(o: ServiceFlags): VerifierOptions {
     simulated: o.simulate ? (JSON.parse(readFileSync(o.simulate, "utf-8")) as SimulatedState) : undefined,
     projectRoot: o.projectRoot ? resolve(o.projectRoot) : undefined,
     agent: (almaId, apiKey) => new AdaSouls({ apiKey, baseUrl }).agent(almaId),
-    apiKey: process.env.ADASOULS_API_KEY || undefined,
+    apiKey: ownKey ? process.env.ADASOULS_API_KEY || undefined : undefined,
     assets: o.assets ? (JSON.parse(readFileSync(o.assets, "utf-8")) as AssetInfo[]) : undefined,
-    explainer: withModel ? { client: new Anthropic(), model: o.model ?? process.env.ALMA_VERIFIER_MODEL ?? DEFAULT_MODEL } : undefined,
+    explainer: withModel ? { client: new Anthropic({ timeout: 120_000, maxRetries: 1 }), model: o.model ?? process.env.ALMA_VERIFIER_MODEL ?? DEFAULT_MODEL } : undefined,
   };
 }
 
@@ -236,7 +237,7 @@ service(
     .option("--project-root <dir>", "the folder local projects may be read from", ".")
 ).action(async (o: ServiceFlags) => {
   // stdout belongs to the MCP transport: nothing else is written to it.
-  await createMcpServer(new Verifier(serviceOptions(o))).connect(new StdioServerTransport());
+  await createMcpServer(new Verifier(serviceOptions(o, true))).connect(new StdioServerTransport());
 });
 
 service(
@@ -248,7 +249,7 @@ service(
     .option("--project-root <dir>", "let callers verify local projects under this folder (off by default)")
     .option("--key <file>", "this verifier's signing key; made on first run", join(homedir(), ".alma-verifier", "issuer.key"))
     .option("--issuer <name>", "the name this verifier signs reports as")
-    .option("--token <token>", "require `Authorization: Bearer <token>` (or set ALMA_VERIFIER_TOKEN)")
+    .option("--token <token>", "require `Authorization: Bearer <token>`. Prefer ALMA_VERIFIER_TOKEN: a flag shows in the process list")
     .option("--allowed-host <host>", "a Host header to answer to (repeatable); defaults to this machine's names when listening on it", collect, [])
     .option("--reports-dir <dir>", "keep reports on disk as well")
 ).action(async (o: ServiceFlags & { port: string; host: string; key: string; issuer?: string; token?: string; allowedHost: string[]; reportsDir?: string }) => {
@@ -259,7 +260,7 @@ service(
   if (!local && !token) throw new Error(`listening on ${o.host} lets others reach this server: set --token (or ALMA_VERIFIER_TOKEN) first`);
   const signer = await verifierKey(resolve(o.key));
   const issuer = o.issuer ?? `verifier:${o.host}:${port}`;
-  const verifier = new Verifier({ ...serviceOptions(o), signer, issuer, reportsDir: o.reportsDir ? resolve(o.reportsDir) : undefined });
+  const verifier = new Verifier({ ...serviceOptions(o, false), signer, issuer, reportsDir: o.reportsDir ? resolve(o.reportsDir) : undefined });
   const allowedHosts = o.allowedHost.length ? o.allowedHost : local ? [`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`] : undefined;
   createHttpServer(verifier, { token, allowedHosts }).listen(port, o.host, () => {
     console.error(`alma-verifier listening on http://${o.host}:${port}`);
@@ -269,19 +270,30 @@ service(
   });
 });
 
+/**
+ * Text a model wrote, made safe to print next to the verifier's own
+ * lines: no control characters (so it can't clear the screen or recolour
+ * anything) and every line behind a bar, so none of it can pass for a
+ * line the verifier printed.
+ */
+// eslint-disable-next-line no-control-regex
+const fromModel = (s: string, indent = "  ") => s.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "").trim().split("\n").map((line) => `${indent}${dim("│")} ${line}`).join("\n");
+
 function renderExplanation(e: Explanation): string {
-  const lines = ["", `${bold("Verdict")}  ${bold(e.verdict)}  ${dim("(computed by the checks, not by the model)")}`, `         ${e.meaning}`, "", e.explanation.trim()];
+  const lines = ["", `${bold("Verdict")}  ${bold(e.verdict)}  ${dim("(computed by the checks, not by the model)")}`, `         ${e.meaning}`];
+  for (const notice of e.notices) lines.push("", yellow(`! ${notice}`));
+  lines.push("", bold("Explanation"), fromModel(e.explanation));
   if (e.fixes.length) {
     lines.push("", bold("Fix in this order"));
     e.fixes.forEach((f, i) => {
       lines.push(`  ${i + 1}. ${f.check}  ${f.title}${dim(`  [${f.severity}]`)}`, `     → ${f.fix}`);
-      if (f.why) lines.push(`     ${dim(f.why)}`);
+      if (f.why) lines.push(fromModel(f.why, "     "));
     });
   }
-  if (e.concerns.length) lines.push("", bold("Also worth a look"), ...e.concerns.map((c) => `  - ${c}`));
-  if (e.draftAlmaYaml) lines.push("", bold("A corrected alma.yaml to review (nothing was changed)"), "", e.draftAlmaYaml.trimEnd());
+  if (e.concerns.length) lines.push("", bold("Also worth a look, according to the model"), ...e.concerns.map((c) => fromModel(c)));
+  if (e.draftAlmaYaml) lines.push("", bold("A corrected alma.yaml to review (nothing was changed)"), fromModel(e.draftAlmaYaml));
   if (e.draftRejected) lines.push("", dim(e.draftRejected));
-  lines.push("", dim(`Explained by ${e.model}. The wording is the model's; the verdict, the findings and each fix are the verifier's.`), "");
+  lines.push("", dim(`Lines behind a bar were written by ${e.model.replace(/[^\w.:-]/g, "")}. The verdict, the findings and each fix are the verifier's.`), "");
   return lines.join("\n");
 }
 
@@ -297,7 +309,8 @@ program
     const path = file ?? join(storeDir(cwd), "verification.json");
     if (!existsSync(path)) throw new Error(`${path} not found: run \`alma-verifier doctor --out <file>\` (or --sign) first`);
     const read = JSON.parse(readFileSync(path, "utf-8")) as Report | SignedReport;
-    const report = "report" in read ? read.report : read;
+    const report = plainReport("report" in read ? read.report : read);
+    if (!report) throw new Error(`${path} is not a verification report`);
     // The project's limits are sent along only when the report is about this project's agent.
     const manifest = report.subject && readIdentity(cwd)?.id === report.subject ? readManifest(cwd) : undefined;
     const explanation = await explain(new Anthropic(), { report, manifest, question: o.question }, o.model ?? process.env.ALMA_VERIFIER_MODEL ?? DEFAULT_MODEL);
