@@ -7,12 +7,14 @@ import type { ChainReader } from "./chain.js";
  * Reads custody from an EVM chain over JSON-RPC: only `eth_call`,
  * `eth_getCode` and `eth_chainId`, nothing that needs a key.
  *
- * NOT YET RUN AGAINST A REAL SAFE. The calls follow the published Safe
- * and Allowance Module interfaces (`getOwners`, `getThreshold`,
- * `isModuleEnabled`, `getTokenAllowance`), and the same checks are
- * tested against the simulated chain; this reader itself has only been
- * type-checked. Treat a verdict it produces as unconfirmed until it has
- * been exercised on a testnet Safe.
+ * Run against Base Sepolia on 2026-10-07, reads only: a real Safe
+ * (detected as one, its owners, threshold and module state read), an
+ * ERC-20 balance, and the Allowance Module v0.1.1 at
+ * 0xAA46724893dedD72658219405185Fb0Fc91e091C answering
+ * `getTokenAllowance`. NOT YET RUN against a Safe that has the module
+ * enabled with an allowance set, so a CHAIN-ENFORCED verdict has only
+ * been produced from the simulated chain: treat one from a real chain
+ * as unconfirmed until that has been exercised.
  */
 const SAFE_ABI = parseAbi(["function getOwners() view returns (address[])", "function getThreshold() view returns (uint256)", "function isModuleEnabled(address module) view returns (bool)"]);
 const ALLOWANCE_ABI = parseAbi(["function getTokenAllowance(address safe, address delegate, address token) view returns (uint256[5])"]);

@@ -6,7 +6,7 @@
 export const FIXES: Record<string, string> = {
   "IDN-01": "Give the agent an identity: `npx @adasouls/alma-cli connect`, or register it with your ALMA provider.",
   "IDN-02": "Link the identity to the person or organization it acts for; delegations are issued by that principal.",
-  "IDN-03": "Bind the wallet to the identity as a wallet controller, proven with a signature from that wallet.",
+  "IDN-03": "Bind the wallet to the identity as a wallet controller (`alma connect --wallet 0x…`), proven with a signature from that wallet. Until it is bound the verdict stays ADVISORY, however well that wallet is protected.",
   "AUT-01": "Have the principal delegate every capability the agent declares, or remove the capabilities it doesn't need.",
   "AUT-02": "Reissue the delegation with an expiry (90 days is a sensible default) and renew it deliberately.",
   "AUT-03": "Reissue the chained delegation so that it grants no more than its issuer holds.",

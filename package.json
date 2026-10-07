@@ -59,8 +59,12 @@
     "@adasouls/alma-core": "^0.7.0",
     "@adasouls/alma-manifest": "^0.2.1",
     "@adasouls/policy-engine": "^0.1.4",
+    "@adasouls/sdk": "^0.4.0",
+    "@anthropic-ai/sdk": "^0.131.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "commander": "^12.1.0",
-    "viem": "^2.57.0"
+    "viem": "^2.57.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.7.0",
