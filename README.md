@@ -21,12 +21,11 @@ It runs on your machine. Your code, keys and files are not uploaded
 anywhere; reading a chain uses read-only RPC calls to an endpoint you
 choose.
 
-> Status: early releases, on npm as `@adasouls/alma-verifier`. Two things have not
-> been run for real yet: the EVM reader against a Safe that has the
-> Allowance Module enabled (it has read a real Safe without one on Base
-> Sepolia), and the explainer against the Claude API (its contract is
-> tested with a stand-in model). Everything else here is covered by the
-> test suite.
+> Status: early releases, on npm as `@adasouls/alma-verifier`. One thing
+> has not been run for real yet: the EVM reader against a Safe that has
+> the Allowance Module enabled (it has read a real Safe without one on
+> Base Sepolia). Everything else here is covered by the test suite, and
+> the explainer has been run against the Claude API.
 
 ## Verify an agent
 
@@ -159,7 +158,9 @@ part of the tool that sends anything anywhere: the report, and your
   data, with instructions not to follow them.
 - A corrected `alma.yaml` it drafts is shown only if it parses and
   loosens nothing: no higher limit, no new asset or capability, no
-  counterparty rule removed. Nothing is written to your files.
+  counterparty rule removed. It is shown as `alma.yaml` reads it, so a
+  key the model made up isn't there, and a draft that then changes
+  nothing isn't shown at all. Nothing is written to your files.
 
 So a model that has been talked into something can produce a wrong
 explanation, and nothing else. No explanation is needed to use a report.
@@ -253,8 +254,7 @@ servers call.
 
 ## Not here yet
 
-- A run against a Safe with the Allowance Module enabled, and a run of
-  the explainer against the Claude API.
+- A run against a Safe with the Allowance Module enabled.
 - From an ALMA provider: an identity's bound wallets, and its receipts.
 - Drafts of the Safe transactions that set allowances are not written
   by the model. `apply-limits` in adasouls-engine compiles `alma.yaml`
