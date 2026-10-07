@@ -211,6 +211,19 @@ a payment against the limits, and ask for an explanation. It takes the
 same `--wallet`, `--signer`, `--custody-signs`, `--rpc`,
 `--allowance-module` and `--simulate` options as `doctor`.
 
+To verify an agent whose ALMA is kept by an ALMA provider (designed in
+Forge, say) instead of the one in this folder, name it and give its key:
+
+```
+export ADASOULS_API_KEY=<the agent's key>
+npx @adasouls/alma-verifier forge --agent alma:main:agent:shopper
+```
+
+That reads the identity, the delegations and the limits from the
+provider, and a payment tried from the page gets the provider's own
+answer. It reads `ADVISORY` at most for now (see "For AI clients: MCP"
+above for why).
+
 The checks still run here. The command starts a server on `127.0.0.1`
 (the first free port from 8790, or `--port`) for this project only, and
 the page in your browser talks to it:

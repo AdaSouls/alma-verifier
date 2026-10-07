@@ -39,7 +39,7 @@ export interface HttpOptions {
    */
   allowedOrigins?: string[];
   /** What this server was started for, when it serves one project: what `GET /v1/project` answers. */
-  project?: () => unknown;
+  project?: () => unknown | Promise<unknown>;
   /**
    * Turns a one-time code into the token (`POST /v1/session`), or
    * returns undefined. For a page opened by a link: the link then
@@ -180,7 +180,7 @@ export function createHttpServer(verifier: Verifier, options: HttpOptions = {}):
       return;
     }
 
-    if (req.method === "GET" && path === "/v1/project" && options.project) return send(res, 200, options.project());
+    if (req.method === "GET" && path === "/v1/project" && options.project) return send(res, 200, await options.project());
 
     const report = /^\/v1\/reports\/([^/]+)$/.exec(path);
     if (req.method === "GET" && report) return send(res, 200, verifier.report(report[1]));

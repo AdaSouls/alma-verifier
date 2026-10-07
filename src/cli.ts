@@ -11,6 +11,7 @@ import { AdaSouls } from "@adasouls/sdk";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Command } from "commander";
 import { LocalSigner, createIssuerKeyset } from "@adasouls/alma-core";
+import { readAgent } from "./adapters/api.js";
 import { readCustody, type ChainReader } from "./adapters/chain.js";
 import { evmReader } from "./adapters/evm.js";
 import { loadSigner, localIssuer, readIdentity, readManifest, readProject, readRulesFile, storeDir } from "./adapters/local.js";
@@ -309,6 +310,7 @@ async function freePort(from: number): Promise<number> {
 
 interface ForgeFlags {
   cwd: string;
+  agent?: string;
   wallet?: string;
   signer?: string;
   custodySigns?: boolean;
@@ -327,6 +329,7 @@ program
   .command("forge")
   .description("Verify the agent in this project and open the result in ALMA Forge. The checks run here; the page in your browser talks to this machine only.")
   .option("--cwd <dir>", "the project's folder", ".")
+  .option("--agent <almaId>", "verify an agent kept by an ALMA provider instead of this folder, with ADASOULS_API_KEY (and ADASOULS_API_URL)")
   .option("--wallet <address>", "the address the agent's funds are at")
   .option("--signer <address>", "an address whose key the agent's runtime holds")
   .option("--custody-signs", "a custody service signs for the agent, which holds no key")
@@ -358,26 +361,34 @@ program
     }
     if (o.wallet && !chain) throw new Error("--wallet needs a chain to read it from: --rpc, or --simulate for a simulated one");
 
-    const identity = readIdentity(cwd);
-    const signer = identity ? await loadSigner(cwd) : undefined;
     const withModel = o.explainer ?? Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+    // Two things it can look at: this folder's ALMA, or an agent an ALMA provider keeps, read with the agent's own key.
+    const apiKey = process.env.ADASOULS_API_KEY || undefined;
+    if (o.agent && !apiKey) throw new Error("--agent reads the agent from the ALMA provider: set ADASOULS_API_KEY to that agent's key first");
+    const baseUrl = process.env.ADASOULS_API_URL || undefined;
+    const handle = o.agent ? new AdaSouls({ apiKey: apiKey!, baseUrl }).agent(o.agent) : undefined;
+    const identity = o.agent ? undefined : readIdentity(cwd);
+    const projectSigner = identity ? await loadSigner(cwd) : undefined;
+    // A project's report is signed with the project's own key, as `doctor --sign` does. An agent read from the
+    // provider has no key on this machine: this verifier's own signs, saying what this machine found.
+    const signing = o.agent ? { signer: await verifierKey(join(homedir(), ".alma-verifier", "issuer.key")), issuer: "verifier:this-machine" } : identity && projectSigner ? { signer: projectSigner, issuer: localIssuer(identity.id) } : {};
     const verifier = new Verifier({
       chains,
       simulated,
-      projectRoot: cwd,
-      // Signed with the project's own key, as `doctor --sign` does: it says what this machine found.
-      ...(identity && signer ? { signer, issuer: localIssuer(identity.id) } : {}),
+      ...(o.agent ? { agent: () => handle!, apiKey } : { projectRoot: cwd }),
+      ...signing,
       assets: o.assets ? (JSON.parse(readFileSync(o.assets, "utf-8")) as AssetInfo[]) : undefined,
       explainer: withModel ? { client: new Anthropic({ timeout: 120_000, maxRetries: 1 }), model: o.model ?? process.env.ALMA_VERIFIER_MODEL ?? DEFAULT_MODEL } : undefined,
     });
 
-    const target = { projectDir: ".", ...(o.wallet ? { walletAddress: o.wallet, chain } : {}), ...(o.signer ? { agentSigner: o.signer } : {}), ...(o.custodySigns ? { custodySigns: true } : {}) };
+    const target = { ...(o.agent ? { almaId: o.agent } : { projectDir: "." }), ...(o.wallet ? { walletAddress: o.wallet, chain } : {}), ...(o.signer ? { agentSigner: o.signer } : {}), ...(o.custodySigns ? { custodySigns: true } : {}) };
     /** What Forge shows next to the report. Read again on each request, so an edited alma.yaml shows after the next run. */
-    const project = () => {
-      const manifest = readManifest(cwd);
+    const project = async () => {
+      // From the provider, the limits are the ones in force there; a failure to read them leaves them out, and the report stands.
+      const manifest = handle ? await readAgent(handle).then((facts) => facts.manifest, () => undefined) : readManifest(cwd);
       return {
-        folder: basename(cwd),
-        agent: readIdentity(cwd)?.id ?? null,
+        folder: o.agent ? null : basename(cwd),
+        agent: o.agent ?? readIdentity(cwd)?.id ?? null,
         target,
         /** The chain payments are tried on, when one is known. */
         chain: chain ?? null,
@@ -410,13 +421,13 @@ program
       console.error(`${red("✗")} ${err.code === "EADDRINUSE" ? `port ${port} is in use: pass another with --port` : err.message}`);
       process.exit(1);
     });
-    server.listen(port, "127.0.0.1", () => {
+    server.listen(port, "127.0.0.1", async () => {
       // After the "#": a browser keeps that part to itself, so neither the token nor the report reaches Forge's server.
       const at = `${forge.origin}${forge.pathname.replace(/\/$/, "")}/#`;
       const connection = { local: `http://127.0.0.1:${port}`, code };
       const short = at + new URLSearchParams(connection).toString();
       // The browser's link also carries this first report, so the page shows it even where a browser won't let a page call this machine.
-      const link = at + new URLSearchParams({ ...connection, r: gzipSync(JSON.stringify({ stored: first, project: project() })).toString("base64url") }).toString();
+      const link = at + new URLSearchParams({ ...connection, r: gzipSync(JSON.stringify({ stored: first, project: await project() })).toString("base64url") }).toString();
       console.log(`${bold("Open in ALMA Forge")}  ${short}`);
       console.log(dim(`\n  Forge runs in your browser and talks to this machine at 127.0.0.1:${port}. Your files and keys stay here.`));
       console.log(dim("  The link works once, within ten minutes: don't share it. Keep this running to verify again or try"));
