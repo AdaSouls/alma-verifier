@@ -1,10 +1,17 @@
 {
   "name": "@adasouls/alma-verifier",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Will this agent obey its soul? Deterministic checks of an AI agent's ALMA identity, authority, limits and custody, with a verdict on what actually enforces them.",
   "license": "MIT",
   "homepage": "https://github.com/AdaSouls/alma-verifier#readme",
-  "keywords": ["alma", "adasouls", "ai-agents", "agent-payments", "verification", "safe"],
+  "keywords": [
+    "alma",
+    "adasouls",
+    "ai-agents",
+    "agent-payments",
+    "verification",
+    "safe"
+  ],
   "type": "module",
   "bin": {
     "alma-verifier": "./dist/cli.js"
@@ -12,14 +19,33 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./guard": { "types": "./dist/guard/index.d.ts", "import": "./dist/guard/index.js" },
-    "./adapters": { "types": "./dist/adapters/index.d.ts", "import": "./dist/adapters/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./guard": {
+      "types": "./dist/guard/index.d.ts",
+      "import": "./dist/guard/index.js"
+    },
+    "./adapters": {
+      "types": "./dist/adapters/index.d.ts",
+      "import": "./dist/adapters/index.js"
+    }
   },
-  "files": ["dist", "docs"],
-  "engines": { "node": ">=20" },
-  "repository": { "type": "git", "url": "https://github.com/AdaSouls/alma-verifier.git" },
-  "publishConfig": { "access": "public" },
+  "files": [
+    "dist",
+    "docs"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AdaSouls/alma-verifier.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "eslint .",
