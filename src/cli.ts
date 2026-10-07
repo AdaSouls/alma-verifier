@@ -276,7 +276,6 @@ service(
  * anything) and every line behind a bar, so none of it can pass for a
  * line the verifier printed.
  */
-// eslint-disable-next-line no-control-regex
 const fromModel = (s: string, indent = "  ") => s.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "").trim().split("\n").map((line) => `${indent}${dim("│")} ${line}`).join("\n");
 
 function renderExplanation(e: Explanation): string {
