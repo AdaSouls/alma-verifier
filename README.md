@@ -21,7 +21,7 @@ It runs on your machine. Your code, keys and files are not uploaded
 anywhere; reading a chain uses read-only RPC calls to an endpoint you
 choose.
 
-> Status: first release, not yet published to npm. Two things have not
+> Status: early releases, on npm as `@adasouls/alma-verifier`. Two things have not
 > been run for real yet: the EVM reader against a Safe that has the
 > Allowance Module enabled (it has read a real Safe without one on Base
 > Sepolia), and the explainer against the Claude API (its contract is
