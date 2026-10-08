@@ -1,6 +1,6 @@
 {
   "name": "@adasouls/alma-verifier",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Will this agent obey its soul? Deterministic checks of an AI agent's ALMA identity, authority, limits and custody, with a verdict on what actually enforces them.",
   "license": "MIT",
   "homepage": "https://github.com/AdaSouls/alma-verifier#readme",

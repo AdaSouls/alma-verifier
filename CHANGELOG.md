@@ -1,5 +1,15 @@
 # @adasouls/alma-verifier
 
+## 0.3.0
+
+### Minor Changes
+
+- [#5](https://github.com/AdaSouls/alma-verifier/pull/5) [`8a947c1`](https://github.com/AdaSouls/alma-verifier/commit/8a947c12d2786f95c11259ebc9af32cd210119b6) Thanks [@MatiFalcone](https://github.com/MatiFalcone)! - New command `forge`: verifies the agent in the project and opens the result in ALMA Forge, a web page that talks to a server the command starts on `127.0.0.1` for that project only. The HTTP server gains `allowedOrigins` (the web origins whose pages may call it from a browser; with it set, a request naming any other origin is refused before anything runs) and `project` (what `GET /v1/project` answers when the server was started for one project). Without those options the server behaves as before, except that a request carrying an `Origin` header is now refused, since no page was ever meant to call it.
+
+  `forge --agent <almaId>` verifies an agent kept by an ALMA provider instead of the one in the folder, read with the agent's own key (`ADASOULS_API_KEY`); a payment tried from the page then gets the provider's own answer. The link the command opens carries a one-time code the page trades for the run's token (`POST /v1/session`, the `exchange` option), never the token itself.
+
+- [#5](https://github.com/AdaSouls/alma-verifier/pull/5) [`975008a`](https://github.com/AdaSouls/alma-verifier/commit/975008a76fdb86f2fc13ef2bb479dbe28dde4e82) Thanks [@MatiFalcone](https://github.com/MatiFalcone)! - The explainer also answers for an owner who is not a developer: `Explanation.plain` holds the bottom line and four answers in plain words (can the agent overspend, what actually stops it, what could still go wrong, what to do next), all five or none. An explanation can be asked for in English, Spanish or Portuguese (`language` on `explain()`, `POST /v1/explain`, the `alma_explain` tool, and `explain --language`); check ids, verdict names and code stay as they are. As before, the verdict, the findings and each fix are the checks', and wording that reassures beyond the verdict is flagged.
+
 ## 0.2.0
 
 ### Minor Changes
