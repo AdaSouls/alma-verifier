@@ -13,7 +13,7 @@ import { KNOWN_ASSETS, type AssetInfo } from "./core/assets.js";
 import { declaredRules } from "./core/checks.js";
 import { signReport, verify, type SignedReport } from "./core/report.js";
 import type { Facts, Report } from "./core/types.js";
-import { ExplainerUnavailable, explain, plainReport, type ExplainerClient, type Explanation } from "./explainer/index.js";
+import { ExplainerUnavailable, LANGUAGES, explain, plainReport, type ExplainerClient, type Explanation } from "./explainer/index.js";
 import { check } from "./guard/index.js";
 
 /**
@@ -296,8 +296,9 @@ export class Verifier {
     return { outcome: "fail", reasons: evaluation.reasons, approvals: [], decidedBy };
   }
 
-  async explain(input: { reportId?: string; report?: unknown; question?: string }): Promise<Explanation & { reportFrom: "this verifier" | "the caller, not checked" }> {
+  async explain(input: { reportId?: string; report?: unknown; question?: string; language?: string }): Promise<Explanation & { reportFrom: "this verifier" | "the caller, not checked" }> {
     if (!this.options.explainer) throw new NotConfigured("this verifier has no model to explain with; the report is complete without one");
+    if (input.language !== undefined && !Object.hasOwn(LANGUAGES, input.language)) throw new InputError(`language: one of ${Object.keys(LANGUAGES).join(", ")}`);
     let report: Report;
     let manifest: AgentManifest | undefined;
     let reportFrom: "this verifier" | "the caller, not checked";
@@ -312,7 +313,7 @@ export class Verifier {
       reportFrom = "the caller, not checked";
     } else throw new InputError("give a report id, or a report");
     try {
-      return { ...(await explain(this.options.explainer.client, { report, manifest, question: input.question }, this.options.explainer.model)), reportFrom };
+      return { ...(await explain(this.options.explainer.client, { report, manifest, question: input.question, language: input.language }, this.options.explainer.model)), reportFrom };
     } catch (err) {
       if (err instanceof ExplainerUnavailable) throw new UpstreamError(err.message);
       if (err instanceof Anthropic.AuthenticationError) throw new UpstreamError("No explanation: the model's credentials were refused. The report itself is unaffected.");

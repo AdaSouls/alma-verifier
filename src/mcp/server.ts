@@ -92,6 +92,7 @@ export function createMcpServer(verifier: Verifier, apiKey?: string): McpServer 
         reportId: z.string().optional().describe("The id of a report this verifier produced. Give this or report."),
         report: z.record(z.string(), z.unknown()).optional().describe("A report, when it isn't one this verifier kept."),
         question: z.string().max(2000).optional().describe("What you want to know about it."),
+        language: z.string().max(8).optional().describe("The language to write in: en (default), es or pt."),
       },
       annotations: { readOnlyHint: true },
     },
