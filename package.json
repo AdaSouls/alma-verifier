@@ -58,7 +58,7 @@
   "dependencies": {
     "@adasouls/alma-core": "^0.7.0",
     "@adasouls/alma-manifest": "^0.2.1",
-    "@adasouls/policy-engine": "^0.1.4",
+    "@adasouls/policy-engine": "^0.2.0",
     "@adasouls/sdk": "^0.4.0",
     "@anthropic-ai/sdk": "^0.131.0",
     "@modelcontextprotocol/sdk": "^1.32.1",

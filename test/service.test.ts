@@ -60,13 +60,17 @@ describe("an agent read from the ALMA provider", () => {
     expect(report.verdict).toBe("ADVISORY");
   });
 
-  it("flags an agent policy that loosens its organization's", async () => {
-    const facts = await readAgent(provider({ org: { maxTransaction: { USDC: "50" }, allowedAssets: ["USDC"] }, own: { maxTransaction: { USDC: "100" } } }), NOW);
+  it("an agent's looser rule doesn't raise what its organization set", async () => {
+    const facts = await readAgent(provider({ org: { maxTransaction: { USDC: "50" }, allowedAssets: ["USDC"] }, own: { ...LIMITS, allowedAssets: ["USDC", "DAI"] } }), NOW);
     expect(facts.orgRules).toEqual({ maxTransaction: { USDC: "50" }, allowedAssets: ["USDC"] });
-    // What the provider's engine applies: the agent's value replaces the organization's.
-    expect(facts.manifest!.authority).toMatchObject({ maxTransaction: { USDC: "100" }, allowedAssets: ["USDC"] });
+    // What the provider's engine applies: the tightest of the two, so the organization's rule is a ceiling.
+    expect(facts.manifest!.authority).toMatchObject({ maxTransaction: { USDC: "50" }, allowedAssets: ["USDC"] });
     const report = await verify(facts);
-    expect(report.checks.find((c) => c.id === "POL-05")).toMatchObject({ status: "fail" });
+    expect(report.checks.find((c) => c.id === "POL-05")).toMatchObject({ status: "pass" });
+
+    // And its own tighter rule is the one in force.
+    const tighter = await readAgent(provider({ org: { maxTransaction: { USDC: "50" } }, own: { maxTransaction: { USDC: "20" } } }), NOW);
+    expect(tighter.manifest!.authority).toMatchObject({ maxTransaction: { USDC: "20" } });
   });
 
   it("a limit that can't be read is kept and reported, not hidden behind one that can", async () => {
