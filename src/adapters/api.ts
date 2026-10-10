@@ -60,8 +60,9 @@ export async function readAgent(agent: AgentSource, now = new Date()): Promise<A
   const own = self.filter((p) => typeof p.scope.agentId === "string").map((p) => p.rules as ManifestSelfPolicyRules);
   const org = self.filter((p) => typeof p.scope.agentId !== "string").map((p) => p.rules as ManifestSelfPolicyRules);
   const orgRules = org.length ? tightest(org) : undefined;
-  // What the provider's engine applies today: the agent's own rules replace its organization's, key by key.
-  const effective: ManifestSelfPolicyRules = { ...orgRules, ...(own.length ? tightest(own) : {}) };
+  // What the provider's engine applies (policy-engine 0.2): the tightest rule wins whatever level it was set at,
+  // so what is set for every agent is a ceiling the agent's own rules can only lower.
+  const effective: ManifestSelfPolicyRules = tightest([...org, ...own]);
   const counterparty = authority.policySummary.find((p) => p.kind === "counterparty")?.rules as ManifestCounterpartyPolicyRules | undefined;
 
   const capabilities = [...new Set(delegations.data.flatMap((d) => d.scope.capabilities))];
