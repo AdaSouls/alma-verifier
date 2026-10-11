@@ -14,7 +14,7 @@ import { readAgent, tightest } from "../src/adapters/api.js";
 import type { SimulatedState } from "../src/adapters/simulated.js";
 import type { AssetInfo } from "../src/core/assets.js";
 import { verify, verifySignedReport } from "../src/core/report.js";
-import { ExplainerUnavailable, draftProblem, explain, plainReport, type ExplainerClient } from "../src/explainer/index.js";
+import { ExplainerUnavailable, draftProblem, explain, plainReport, streamed, type ExplainerClient } from "../src/explainer/index.js";
 import { createHttpServer } from "../src/http/server.js";
 import { createMcpServer } from "../src/mcp/server.js";
 import { InputError, NotConfigured, UpstreamError, Verifier, type AgentHandle } from "../src/service.js";
@@ -247,6 +247,25 @@ describe("Claude explains, and never decides", () => {
     expect((await explain(model({ plain: { ...plain, whatToDo: "" }, explanation: "ADVISORY.", fixOrder: [], concerns: [], almaYaml: null }), { report })).plain).toBeUndefined();
     const soothing = model({ plain: { ...plain, canOverspend: "No: it is chain-enforced." }, explanation: "All fine.", fixOrder: [], concerns: [], almaYaml: null });
     expect((await explain(soothing, { report })).notices).toEqual([expect.stringContaining("Only that one counts")]);
+  });
+
+  it("asks for the answer as a stream, so a slow one is late instead of cut off", async () => {
+    const report = await advisory();
+    const asked: Anthropic.MessageCreateParamsNonStreaming[] = [];
+    const answer = { plain: null, explanation: "ADVISORY: the agent holds its key.", fixOrder: [], concerns: [], almaYaml: null };
+    // The part of the SDK's client this uses: `stream()` and its `finalMessage()`.
+    const sdk = {
+      messages: {
+        stream: (params: Anthropic.MessageCreateParamsNonStreaming) => {
+          asked.push(params);
+          return { finalMessage: async () => ({ model: params.model, stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify(answer) }] }) as unknown as Anthropic.Message };
+        },
+      },
+    };
+    const said = await explain(streamed(sdk as never), { report });
+    expect(said.verdict).toBe("ADVISORY");
+    expect(asked).toHaveLength(1);
+    expect(asked[0].output_config).toMatchObject({ effort: "medium", format: { type: "json_schema" } });
   });
 
   it("has no tools, and gets what the agent wrote only as quoted data", async () => {

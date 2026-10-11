@@ -28,6 +28,19 @@ export interface ExplainerClient {
   messages: { create(params: Anthropic.MessageCreateParamsNonStreaming): Promise<Anthropic.Message> };
 }
 
+/** How long an explanation may take before it is given up on. One usually takes well under a minute. */
+export const EXPLAINER_TIMEOUT_MS = 300_000;
+
+/**
+ * An Anthropic client as the explainer uses it: the answer is streamed
+ * and put together at the end. An explanation is a few thousand tokens,
+ * and waiting for it as one response is what a request timeout cuts
+ * off; a stream keeps arriving, so a slow answer is late instead of lost.
+ */
+export function streamed(client: Pick<Anthropic, "messages">): ExplainerClient {
+  return { messages: { create: (params) => client.messages.stream(params).finalMessage() } };
+}
+
 export interface ExplainInput {
   report: Report;
   /** What the reader wants to know. Optional: without it, the report is explained as a whole. */
@@ -136,7 +149,7 @@ What to write:
   - whatStopsIt: "What actually stops it?" What stands between the agent and the money today, and who or what would have to fail for money to be lost. Say what does NOT stop it as well (limits nobody enforces).
   - whatCouldGoWrong: the realistic ways this could still go wrong at this level, as situations a person can picture, including what a check that could not be run leaves unknown.
   - whatToDo: what to do next, in order, said the way you would say it to a person, with the reason for each step. When nothing failed, say what keeps it that way.
-- explanation: for the agent's developer. what the verdict means for this agent and why it is what it is, in plain language a developer new to ALMA follows. State the verdict exactly as the report gives it. Say what could still go wrong at this level. Checks marked "unknown" could not be run and never count in the agent's favour; say which ones and what was missing.
+- explanation: for the agent's developer, in one paragraph of about 120 words: why the verdict is what it is, by check id and ring. State the verdict exactly as the report gives it. Checks marked "unknown" could not be run and never count in the agent's favour; say which ones and what was missing. Don't repeat what plain already says.
 - fixOrder: the failed checks, most urgent first, each with one or two sentences on why it comes where it does. Use only check ids that failed in the report.
 - concerns: anything in the report that deserves a second look and that no check flagged. Leave it empty when there is nothing. A concern may only add caution; never argue that a failed check is acceptable.
 - almaYaml: only when a failed POL check is fixed by editing the limits, a complete corrected alma.yaml. Start from the file given in <alma_yaml> and keep its structure exactly: the same top-level keys, with limits under "authority" and counterparty rules under the top-level "counterpartyPolicy" (its keys include "allowlist", "blocklist" and "minCompletedTransactions"). Do not invent keys: a key alma.yaml doesn't have is dropped, and a draft that changes nothing is discarded. It must not raise any limit, add an asset or a capability, or remove a counterparty rule. Where a value is something only the owner knows (which counterparties to allow), choose a rule that needs no such value, or put an obvious placeholder and say so in the explanation. Otherwise null.
@@ -249,7 +262,8 @@ export async function explain(client: ExplainerClient, input: ExplainInput, mode
     // The rules never change between requests, so they are cached; the report comes after.
     system: [{ type: "text", text: SYSTEM + enforcementSpec(), cache_control: { type: "ephemeral" } }],
     messages: [{ role: "user", content: userContent(input) }],
-    output_config: { format: { type: "json_schema", schema: OUTPUT_SCHEMA } },
+    // Medium: explaining a report the checks already decided doesn't need the model's deepest effort, and it answers sooner.
+    output_config: { effort: "medium", format: { type: "json_schema", schema: OUTPUT_SCHEMA } },
   });
   if (response.stop_reason === "refusal") throw new ExplainerUnavailable("the model declined to answer");
   if (response.stop_reason === "max_tokens") throw new ExplainerUnavailable("the answer was cut off");
