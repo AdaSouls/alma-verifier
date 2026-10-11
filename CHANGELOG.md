@@ -1,5 +1,11 @@
 # @adasouls/alma-verifier
 
+## 0.3.1
+
+### Patch Changes
+
+- [#7](https://github.com/AdaSouls/alma-verifier/pull/7) [`74946f3`](https://github.com/AdaSouls/alma-verifier/commit/74946f3f4b57bb0ec7e983c836ccecff1f8e027b) Thanks [@MatiFalcone](https://github.com/MatiFalcone)! - An agent read from an ALMA provider now gets the limits the provider really applies: the tightest of what is set for every agent of its organization (or person) and its own rules, as `@adasouls/policy-engine` 0.2 evaluates them. Before, the agent's own rule was taken to replace the wider one, so a looser agent rule showed as the limit in force and failed POL-05; it is now simply not in force. Moves to `@adasouls/policy-engine` ^0.2.0.
+
 ## 0.3.0
 
 ### Minor Changes
