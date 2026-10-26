@@ -20,7 +20,7 @@ import { KNOWN_ASSETS, type AssetInfo } from "./core/assets.js";
 import { declaredRules } from "./core/checks.js";
 import { signReport, verify, verifySignedReport, type SignedReport } from "./core/report.js";
 import { VERDICTS, type CheckResult, type Facts, type Report, type Verdict } from "./core/types.js";
-import { DEFAULT_MODEL, LANGUAGES, explain, plainReport, type Explanation } from "./explainer/index.js";
+import { DEFAULT_MODEL, EXPLAINER_TIMEOUT_MS, LANGUAGES, explain, plainReport, streamed, type Explanation } from "./explainer/index.js";
 import { check } from "./guard/index.js";
 import { createHttpServer } from "./http/server.js";
 import { createMcpServer } from "./mcp/server.js";
@@ -215,7 +215,7 @@ function serviceOptions(o: ServiceFlags, ownKey: boolean): VerifierOptions {
     agent: (almaId, apiKey) => new AdaSouls({ apiKey, baseUrl }).agent(almaId),
     apiKey: ownKey ? process.env.ADASOULS_API_KEY || undefined : undefined,
     assets: o.assets ? (JSON.parse(readFileSync(o.assets, "utf-8")) as AssetInfo[]) : undefined,
-    explainer: withModel ? { client: new Anthropic({ timeout: 120_000, maxRetries: 1 }), model: o.model ?? process.env.ALMA_VERIFIER_MODEL ?? DEFAULT_MODEL } : undefined,
+    explainer: withModel ? { client: streamed(new Anthropic({ timeout: EXPLAINER_TIMEOUT_MS, maxRetries: 1 })), model: o.model ?? process.env.ALMA_VERIFIER_MODEL ?? DEFAULT_MODEL } : undefined,
   };
 }
 
@@ -378,7 +378,7 @@ program
       ...(o.agent ? { agent: () => handle!, apiKey } : { projectRoot: cwd }),
       ...signing,
       assets: o.assets ? (JSON.parse(readFileSync(o.assets, "utf-8")) as AssetInfo[]) : undefined,
-      explainer: withModel ? { client: new Anthropic({ timeout: 120_000, maxRetries: 1 }), model: o.model ?? process.env.ALMA_VERIFIER_MODEL ?? DEFAULT_MODEL } : undefined,
+      explainer: withModel ? { client: streamed(new Anthropic({ timeout: EXPLAINER_TIMEOUT_MS, maxRetries: 1 })), model: o.model ?? process.env.ALMA_VERIFIER_MODEL ?? DEFAULT_MODEL } : undefined,
     });
 
     const target = { ...(o.agent ? { almaId: o.agent } : { projectDir: "." }), ...(o.wallet ? { walletAddress: o.wallet, chain } : {}), ...(o.signer ? { agentSigner: o.signer } : {}), ...(o.custodySigns ? { custodySigns: true } : {}) };
@@ -484,7 +484,7 @@ program
     if (!report) throw new Error(`${path} is not a verification report`);
     // The project's limits are sent along only when the report is about this project's agent.
     const manifest = report.subject && readIdentity(cwd)?.id === report.subject ? readManifest(cwd) : undefined;
-    const explanation = await explain(new Anthropic(), { report, manifest, question: o.question, language: o.language }, o.model ?? process.env.ALMA_VERIFIER_MODEL ?? DEFAULT_MODEL);
+    const explanation = await explain(streamed(new Anthropic({ timeout: EXPLAINER_TIMEOUT_MS, maxRetries: 1 })), { report, manifest, question: o.question, language: o.language }, o.model ?? process.env.ALMA_VERIFIER_MODEL ?? DEFAULT_MODEL);
     console.log(o.json ? JSON.stringify(explanation, null, 2) : renderExplanation(explanation));
   });
 
