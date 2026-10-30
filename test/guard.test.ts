@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { readProject } from "../src/adapters/local.js";
@@ -6,6 +6,7 @@ import { verify } from "../src/core/report.js";
 import { PaymentDenied, PaymentNotRecorded, check, guard, type PaymentIntent } from "../src/guard/index.js";
 import { LIMITS, PAYEE, project } from "./helpers.js";
 
+const BAD = "0xbAd0000000000000000000000000000000000bad";
 const pay = (amount: string, more: Partial<PaymentIntent> = {}): PaymentIntent => ({ to: PAYEE, asset: "USDC", amount, chain: "eip155:84532", ...more });
 const day = (iso: string) => () => new Date(iso);
 const NOON = day("2026-10-07T12:00:00Z");
@@ -114,9 +115,33 @@ describe("the local guard", () => {
   it("a counterparty rule it can't evaluate denies rather than passes", async () => {
     const { cwd } = await project({ counterparty: true });
     const { sent, send } = sender();
+    writeFileSync(join(cwd, ".alma", "counterparties.json"), JSON.stringify([{ id: "alma:main:agent:supplier", addresses: [`eip155:84532:${PAYEE}`] }]));
     await denied(guard(send, { cwd, now: NOON })(pay("1", { counterparty: "alma:main:agent:stranger" })));
+    // An address nobody is known to own doesn't pass an allowlist.
+    await denied(guard(send, { cwd, now: NOON })(pay("1", { to: BAD })));
     await guard(send, { cwd, now: NOON })(pay("1", { counterparty: "alma:main:agent:supplier" }));
-    expect(sent).toHaveLength(1);
+    // Who is paid is resolved from the address: the id doesn't have to be given.
+    await guard(send, { cwd, now: NOON })(pay("1"));
+    expect(sent).toHaveLength(2);
+    expect(JSON.parse(readFileSync(join(cwd, ".alma", "receipts.jsonl"), "utf-8").split("\n")[0]).statement.payee).toBe("alma:main:agent:supplier");
+  });
+
+  it("the caller's counterparty id never stands in for the address (B10)", async () => {
+    const { cwd } = await project({ counterparty: true });
+    const { sent, send } = sender();
+    writeFileSync(join(cwd, ".alma", "counterparties.json"), JSON.stringify([{ id: "alma:main:agent:supplier", addresses: [`eip155:84532:${PAYEE}`] }]));
+    // A prompt-injected tool call controls both fields: a trusted id, and its own address.
+    const err = await denied(guard(send, { cwd, now: NOON })(pay("1", { to: BAD, counterparty: "alma:main:agent:supplier" })));
+    expect(err.reasons.join()).toContain("isn't known to belong to alma:main:agent:supplier");
+    expect(check(pay("1", { to: BAD, counterparty: "alma:main:agent:supplier" }), { cwd, now: NOON }).decision).toBe("deny");
+    // The same holds with no counterparty rule at all: a claim that doesn't match the address is refused.
+    const plain = await project();
+    expect(check(pay("1", { to: BAD, counterparty: "alma:main:agent:supplier" }), { cwd: plain.cwd, now: NOON, counterparties: [{ id: "alma:main:agent:supplier", addresses: [`eip155:84532:${PAYEE}`] }] }).decision).toBe("deny");
+    // The address resolved to someone else.
+    expect(check(pay("1", { counterparty: "alma:main:agent:other" }), { cwd, now: NOON })).toMatchObject({ decision: "deny", reasons: [expect.stringContaining("belongs to alma:main:agent:supplier")] });
+    // An address two directories disagree about resolves to nobody.
+    expect(check(pay("1", { counterparty: "alma:main:agent:supplier" }), { cwd, now: NOON, counterparties: [{ id: "alma:main:agent:evil", addresses: [`eip155:84532:${PAYEE}`] }] }).decision).toBe("deny");
+    expect(sent).toHaveLength(0);
   });
 
   it("says so, with the transaction, when a payment went out and couldn't be recorded", async () => {

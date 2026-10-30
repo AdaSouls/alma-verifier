@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { appendToFrontier, buildReceiptStatement, envelopeLeafHash, hashToHex, hexToHash, receiptDigest, receiptStatementSchema, signReceiptMint, toBaseUnits } from "@adasouls/alma-core";
@@ -35,6 +35,12 @@ export interface GuardOptions {
    * only when a person said yes. Without it, such payments are refused.
    */
   approve?: (payment: PaymentIntent) => Promise<boolean>;
+  /**
+   * Who addresses belong to, beyond `.alma/counterparties.json`. A payment
+   * is judged against the counterparty its `to` resolves to here, never
+   * against the id the caller passes.
+   */
+  counterparties?: Counterparty[];
   /** "mainnet", "testnet" or "mock", for a chain this package doesn't know. */
   env?: "mainnet" | "testnet" | "mock";
   now?: () => Date;
@@ -66,7 +72,35 @@ export interface GuardedResult {
   position: number;
 }
 
+/** An ALMA id and the addresses that receive its payments, as CAIP-10 ("eip155:84532:0x…"). */
+export interface Counterparty {
+  id: string;
+  addresses: string[];
+}
+
 const utcDay = (d: Date) => d.toISOString().slice(0, 10);
+
+/** `.alma/counterparties.json`: written by whoever runs the project, not by the agent's tool calls. */
+export function readCounterparties(cwd: string): Counterparty[] {
+  const path = join(storeDir(cwd), "counterparties.json");
+  if (!existsSync(path)) return [];
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, "utf-8"));
+  } catch {
+    throw new Error(".alma/counterparties.json is not valid JSON");
+  }
+  const ok = (c: Partial<Counterparty>) => typeof c?.id === "string" && Array.isArray(c.addresses) && c.addresses.every((a) => typeof a === "string");
+  if (!Array.isArray(raw) || !raw.every(ok)) throw new Error('.alma/counterparties.json is not a list of { "id", "addresses" }');
+  return raw as Counterparty[];
+}
+
+/** Whose address `to` is on `chain`, when exactly one counterparty claims it. Two that claim it are no answer. */
+export function resolveCounterparty(directory: Counterparty[], chain: string, to: string): string | undefined {
+  const at = `${chain}:${to}`.toLowerCase();
+  const ids = [...new Set(directory.filter((c) => c.addresses.some((a) => a.toLowerCase() === at)).map((c) => c.id))];
+  return ids.length === 1 ? ids[0] : undefined;
+}
 
 /** What this project's own receipts say it has spent today (UTC), per asset symbol. */
 export function spentToday(cwd: string, agentId: string, assets: AssetInfo[], now: Date): Record<string, string> {
@@ -94,8 +128,9 @@ export function check(payment: PaymentIntent, options: GuardOptions = {}): Inten
   const rules = [manifest?.authority, ...active.map((d) => d.scope.constraints as ManifestSelfPolicyRules | undefined), ...(options.rules ?? [])].filter((r): r is ManifestSelfPolicyRules => r !== undefined && Object.keys(r).length > 0);
   if (rules.length === 0) return { decision: "deny", reasons: ["no limits are declared: a guard with nothing to check refuses rather than wave everything through"] };
 
+  const counterparty = resolveCounterparty([...readCounterparties(cwd), ...(options.counterparties ?? [])], payment.chain, payment.to);
   return checkIntent(
-    { agentId: identity.id, capabilities: active.flatMap((d) => d.scope.capabilities), rules, counterpartyPolicy: manifest?.counterpartyPolicy, spentToday: spentToday(cwd, identity.id, [...(options.assets ?? []), ...KNOWN_ASSETS], now), now },
+    { agentId: identity.id, capabilities: active.flatMap((d) => d.scope.capabilities), rules, counterpartyPolicy: manifest?.counterpartyPolicy, counterparty: counterparty ? { id: counterparty } : undefined, spentToday: spentToday(cwd, identity.id, [...(options.assets ?? []), ...KNOWN_ASSETS], now), now },
     payment
   );
 }
@@ -140,7 +175,7 @@ export function guard(send: SendPayment, options: GuardOptions = {}): (payment: 
     const { txHash } = await send(payment);
     try {
       const action = `act_${randomUUID()}`;
-      const statement = buildReceiptStatement({ issuer: localIssuer(identity.id), env, action, payer: identity.id, payee: payment.counterparty ?? payment.to, capability: payment.capability ?? "pay", chain: payment.chain, asset: asset.id, amount: baseUnits, to: payment.to, txHash, settledAt: options.now?.() });
+      const statement = buildReceiptStatement({ issuer: localIssuer(identity.id), env, action, payer: identity.id, payee: resolveCounterparty([...readCounterparties(cwd), ...(options.counterparties ?? [])], payment.chain, payment.to) ?? payment.to, capability: payment.capability ?? "pay", chain: payment.chain, asset: asset.id, amount: baseUnits, to: payment.to, txHash, settledAt: options.now?.() });
       const id = `rcp_${action}`;
       // Not independent: the payer signs its own record. Nobody else vouched for it.
       const mint = await signReceiptMint(signer, { iss: localIssuer(identity.id), receipt: id, digest: await receiptDigest(statement), independent: false });

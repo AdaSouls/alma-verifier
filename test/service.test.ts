@@ -158,9 +158,10 @@ describe("the verifier as a service", () => {
     const verifier = new Verifier({ agent: (_id, key) => (keys.push(key), provider()), apiKey: "default-key", simulated: { accounts: { [WALLET]: { kind: "eoa" } } }, assets });
     const { report } = await verifier.verify({ almaId: "alma:main:agent:shopper", walletAddress: WALLET, chain: CHAIN, custodySigns: true }, "callers-key");
     expect(keys).toEqual(["callers-key"]);
-    // The provider doesn't say which wallets are the agent's, so custody that looks right still can't raise the verdict.
-    expect(report.rings.find((r) => r.ring === 2)!.state).toBe("in place");
+    // A custody service signing is the caller's word: ring 2 can't be seen, and the provider doesn't say which wallets are the agent's either.
+    expect(report.rings.find((r) => r.ring === 2)!.state).toBe("unknown");
     expect(report.verdict).toBe("ADVISORY");
+    expect(report.claimed).toBeUndefined();
     await verifier.verify({ almaId: "alma:main:agent:shopper" });
     expect(keys[1]).toBe("default-key");
     await expect(new Verifier({ agent: () => provider() }).verify({ almaId: "x" })).rejects.toThrow("API key");
@@ -185,7 +186,8 @@ describe("the verifier as a service", () => {
     const denied = provider({ evaluation: { allowed: false, reasons: ["over the daily limit"], approvalsRequired: [] } });
     const verifier = new Verifier({ agent: () => denied, apiKey: "k" });
     expect(await verifier.check({ almaId: "alma:main:agent:shopper", amount: "9", asset: "USDC", to: PAYEE, counterparty: "alma:main:agent:supplier" })).toEqual({ outcome: "fail", reasons: ["over the daily limit"], approvals: [], decidedBy: "the ALMA provider" });
-    expect(denied.asked).toEqual([{ capability: "pay", amount: "9", asset: "USDC", to: PAYEE, counterparty: { id: "alma:main:agent:supplier" } }]);
+    // The caller's counterparty id isn't passed on as fact: the provider judges the address.
+    expect(denied.asked).toEqual([{ capability: "pay", amount: "9", asset: "USDC", to: PAYEE }]);
     const pending = new Verifier({ agent: () => provider({ evaluation: { allowed: false, reasons: [], approvalsRequired: ["human"] } }), apiKey: "k" });
     expect((await pending.check({ almaId: "a", amount: "9", asset: "USDC", to: PAYEE })).outcome).toBe("requires_approval");
   });

@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { LocalSigner, almaIdentitySchema, createIssuerKeyset, delegationSchema, type AlmaIdentity, type Delegation } from "@adasouls/alma-core";
 import { parseManifestYaml, type AgentManifest, type ManifestSelfPolicyRules } from "@adasouls/alma-manifest";
-import type { Facts, HistoryFacts } from "../core/types.js";
+import type { ControllerProof, Facts, HistoryFacts } from "../core/types.js";
 
 /**
  * Reads a project the ALMA CLI connected: `alma.yaml` next to the code
@@ -38,6 +38,19 @@ export function readDelegations(cwd: string): Delegation[] {
   const parsed = delegationSchema.array().safeParse(raw);
   if (!parsed.success) throw new Error(".alma/delegations.json is not a list of ALMA delegations");
   return parsed.data;
+}
+
+/**
+ * `.alma/controller-proofs.json`: signatures from wallets accepting the
+ * binding. Read as they are; whether each signature is the wallet's is
+ * the chain's to say, when custody is read.
+ */
+export function readControllerProofs(cwd: string): ControllerProof[] {
+  const raw = json(join(storeDir(cwd), "controller-proofs.json"));
+  if (raw === undefined) return [];
+  const ok = (p: Record<string, unknown>) => p?.v === "alma-controller-proof/1" && ["almaId", "wallet", "chain", "signature"].every((k) => typeof p[k] === "string");
+  if (!Array.isArray(raw) || !raw.every(ok)) throw new Error(".alma/controller-proofs.json is not a list of ALMA controller proofs");
+  return (raw as ControllerProof[]).map(({ v, almaId, wallet, chain, signature }) => ({ v, almaId, wallet, chain, signature }));
 }
 
 export function readManifest(cwd: string): AgentManifest | undefined {
@@ -100,7 +113,7 @@ async function readHistory(cwd: string, identity: AlmaIdentity): Promise<History
 }
 
 /** The facts a project's own files give. Custody is not among them: where the funds are is read from the chain. */
-export async function readProject(cwd: string, now = new Date()): Promise<Pick<Facts, "identity" | "delegations" | "manifest" | "history" | "now">> {
+export async function readProject(cwd: string, now = new Date()): Promise<Pick<Facts, "identity" | "controllerProofs" | "delegations" | "manifest" | "history" | "now">> {
   const identity = readIdentity(cwd);
-  return { identity, delegations: readDelegations(cwd), manifest: readManifest(cwd), history: identity ? await readHistory(cwd, identity) : undefined, now };
+  return { identity, controllerProofs: readControllerProofs(cwd), delegations: readDelegations(cwd), manifest: readManifest(cwd), history: identity ? await readHistory(cwd, identity) : undefined, now };
 }

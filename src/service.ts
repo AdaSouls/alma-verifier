@@ -105,7 +105,7 @@ const MAX_KEPT = 500;
 const inside = (root: string, path: string) => path === root || path.startsWith(root + sep);
 const NO_PROJECT = "no such project folder among the ones this verifier may read";
 /** The files a project is read from. Each must really be inside it: a link that leads elsewhere is refused, not followed. */
-const PROJECT_FILES = ["alma.yaml", ".alma", ".alma/identity.json", ".alma/delegations.json", ".alma/receipts.jsonl", ".alma/log.json", ".alma/issuer.key"];
+const PROJECT_FILES = ["alma.yaml", ".alma", ".alma/identity.json", ".alma/delegations.json", ".alma/controller-proofs.json", ".alma/counterparties.json", ".alma/receipts.jsonl", ".alma/log.json", ".alma/issuer.key"];
 
 export class Verifier {
   private readonly kept = new Map<string, StoredReport & { manifest?: AgentManifest }>();
@@ -163,7 +163,7 @@ export class Verifier {
 
   private reader(chain: string): Promise<ChainReader> | undefined {
     if (this.options.simulated) {
-      const simulated = new SimulatedChain(this.options.simulated);
+      const simulated = new SimulatedChain(this.options.simulated, this.assets());
       if (simulated.chain === chain) return Promise.resolve(simulated);
     }
     const configured = this.options.chains?.[chain];
@@ -223,10 +223,11 @@ export class Verifier {
         try {
           const rules = declaredRules(facts);
           const symbols = [...new Set([...(rules.allowedAssets ?? []), ...Object.keys(rules.maxTransaction ?? {}), ...Object.keys(rules.dailySpend ?? {})])];
-          facts.custody = await readCustody(await reader, { wallet: input.walletAddress, agentSigner: input.agentSigner, signedBy: input.custodySigns ? "custody" : undefined, symbols, assets: this.assets() });
+          facts.custody = await readCustody(await reader, { wallet: input.walletAddress, agentSigner: input.agentSigner, signedBy: input.custodySigns ? "custody" : undefined, symbols, assets: this.assets(), almaId: facts.identity?.id, controllerProofs: facts.controllerProofs });
           sources.push(this.isSimulated(input.chain) ? "simulated chain (not a network)" : `chain ${input.chain} over JSON-RPC`);
           // Who holds the key can't be read from a chain. It is the caller's statement, and the report says so.
-          if (input.custodySigns) sources.push("stated by the caller, not checked: a custody service signs for the agent");
+          if (input.custodySigns) sources.push("stated by the caller, not checked: a custody service signs for the agent (shown as claimed, never as the verdict)");
+          if (facts.custody.controllerProof) sources.push(`controller proof for ${input.walletAddress}, checked on ${input.chain}`);
           if (input.agentSigner) sources.push(`stated by the caller, not checked: the agent's runtime holds the key of ${input.agentSigner}`);
         } catch {
           // Not the error's own text: it can carry the endpoint's URL, and that may hold a key.
@@ -285,7 +286,8 @@ export class Verifier {
     }
     let evaluation: Awaited<ReturnType<AgentHandle["checkPolicy"]>>;
     try {
-      evaluation = await this.agent(target.almaId, apiKey).checkPolicy({ capability: input.capability ?? "pay", amount: input.amount, asset: input.asset, to: input.to, ...(input.counterparty ? { counterparty: { id: input.counterparty } } : {}) });
+      // The caller's counterparty id is not passed on: it is a claim the caller controls as fully as `to`. The provider judges the address.
+      evaluation = await this.agent(target.almaId, apiKey).checkPolicy({ capability: input.capability ?? "pay", amount: input.amount, asset: input.asset, to: input.to });
     } catch (err) {
       if (err instanceof InputError || err instanceof NotConfigured) throw err;
       throw new UpstreamError(`the ALMA provider didn't answer: ${(err instanceof Error ? err.message : String(err)).split("\n")[0]}`);

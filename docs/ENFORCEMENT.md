@@ -35,13 +35,19 @@ and in this order:
 
 1. `UNCONNECTED` unless IDN-01 and AUT-01 pass.
 2. `ADVISORY` unless IDN-03 passes: the wallet that was looked at must be
-   a bound controller of the agent's identity. A well-protected wallet
-   says nothing about an agent it doesn't belong to; without this, an
-   agent could be verified against somebody else's Safe.
+   a controller of the agent's identity, **and** have signed a controller
+   proof for it on that chain. A well-protected wallet says nothing about
+   an agent it doesn't belong to; without this, an agent could be
+   verified against somebody else's Safe.
 3. `CHAIN-ENFORCED` when CUS-03 passes, CUS-02 and CUS-04 don't fail, and
    CUS-05 passes.
 4. `CUSTODY-ENFORCED` when the agent holds no signer, a custody service
-   signs, and CUS-05 doesn't fail.
+   signs, CUS-05 doesn't fail, and the custody service's signing was
+   established by something other than the caller's word. Nothing in
+   this version can check that, so `--custody-signs` (`custodySigns`)
+   leaves the verdict at what is proven and adds
+   `claimed: { verdict: "CUSTODY-ENFORCED", basis: "stated by the caller, not checked…" }`
+   to the report.
 5. `ADVISORY` otherwise.
 
 The rings in a report describe the wallet that was looked at, whoever it
@@ -49,9 +55,23 @@ belongs to; the verdict is about the agent. So a report can show ring 3
 in place and still say `ADVISORY`: that wallet is protected, and it
 hasn't been shown to be this agent's.
 
-A binding today is the identity naming the wallet. It is not yet a
-signature from that wallet, so it shows that the agent claims the
-wallet, not that the wallet's owners accept the agent.
+A binding has two halves. The identity naming the wallet
+(`.alma/identity.json`, written by `alma connect --wallet` with no proof)
+is the agent's claim. A controller proof is the wallet agreeing: its
+signature over
+
+```
+ALMA controller proof
+
+I control <wallet, lowercase> on <CAIP-2 chain> and bind it to <ALMA id>.
+```
+
+kept in `.alma/controller-proofs.json` and checked on that chain when
+custody is read: ecrecover for a key, ERC-1271 `isValidSignature` for a
+Safe (so its owners, up to its threshold, have signed). `alma-verifier
+controller-proof` prints the message and saves the signature. A listed
+wallet with no proof is "controller not proven" (IDN-03 `unknown`); a
+proof that doesn't verify fails IDN-03.
 
 A check that couldn't be run is `unknown`, and `unknown` never counts in
 the agent's favour. No wallet given, an RPC endpoint that doesn't answer,
@@ -69,7 +89,7 @@ no judgement, so the same facts give the same result whoever runs it.
 |---|---|---|
 | IDN-01 | The identity exists and is active | critical |
 | IDN-02 | A principal is linked | high |
-| IDN-03 | The wallet address is a bound controller of this identity | high |
+| IDN-03 | The wallet address is a bound controller of this identity, proven by its signature | high |
 
 **Authority**
 
@@ -83,11 +103,19 @@ no judgement, so the same facts give the same result whoever runs it.
 
 | | | Severity |
 |---|---|---|
-| POL-01 | Every allowed asset has a per-transaction limit | high |
-| POL-02 | The human-approval threshold is below the per-transaction limit (otherwise it can never trigger) | medium |
+| POL-01 | Every allowed asset has a per-transaction limit, and `allowedAssets` says which assets those are | high |
+| POL-02 | Every allowed asset has a human-approval threshold below its per-transaction limit | medium |
 | POL-03 | The daily limit is at least the per-transaction limit | low |
 | POL-04 | Payments have a counterparty policy | medium |
 | POL-05 | The agent's policy never loosens what was set above it | high |
+
+Neither passes vacuously. Without `allowedAssets` every asset is
+allowed (that is how the policy engine reads it), so the assets that
+aren't named have no limit at all: POL-01 fails. No threshold, or a
+threshold for some assets and not others, means some payment can never
+need a person: POL-02 fails. What `alma connect -y` declares (100 USDC
+per transaction, 500 a day, approval above 50, `allowedAssets: [USDC]`)
+passes both.
 
 POL-05 is the rule that an organization's limits are a ceiling. An
 agent's own rules, and the delegation it holds, may only tighten them.
@@ -103,6 +131,17 @@ transaction is not respected by declaring no per-transaction limit.
 | CUS-03 | The Allowance Module caps the agent's signer at or below the declared limits | (earns `CHAIN-ENFORCED`) |
 | CUS-04 | No on-chain allowance is above the declared limit | high |
 | CUS-05 | No funds sit at another address the agent can sign for | high |
+
+What counts as a Safe, read from a chain: code that is a known SafeProxy
+(v1.3.0, v1.4.1, v1.5.0) delegating to a known Safe singleton. A
+contract that merely answers `getOwners` and `getThreshold` is just a
+contract. The Allowance Module address given must be one of its
+published deployments. CUS-03 then fails if any other module is enabled
+(any module can move the Safe's funds without an allowance) or a guard
+is set (code the verifier doesn't know). Every allowance the agent's
+signer has is read with the module's `getTokens`, the native token's
+included; one for an asset with no declared daily limit, or for a token
+the asset table doesn't know, fails CUS-04.
 
 An allowance is compared by what it lets through in a day: 100 USDC that
 resets every hour is 2,400 USDC a day, and fails against a declared daily

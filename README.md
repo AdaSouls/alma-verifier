@@ -35,10 +35,20 @@ npx @adasouls/alma-verifier doctor
 ```
 
 With nothing else, the best it can say is `ADVISORY`: it has seen the
-limits, not where the money is. Tell it, and make sure the wallet is
-bound to the agent's identity (`alma connect --wallet 0xSafe…`): a
-wallet that isn't the agent's can't raise its verdict, however well it
-is protected.
+limits, not where the money is. Tell it, and prove the wallet is the
+agent's: list it in the identity (`alma connect --wallet 0xSafe…`), then
+have the wallet sign that it accepts the binding:
+
+```
+npx @adasouls/alma-verifier controller-proof --wallet 0xSafe… --chain eip155:84532
+# sign the message it prints with the wallet (for a Safe, as a Safe message), then:
+npx @adasouls/alma-verifier controller-proof --wallet 0xSafe… --chain eip155:84532 --signature 0x…
+```
+
+The signature is checked on the chain when `doctor` reads custody
+(ecrecover for a key, ERC-1271 for a Safe). A wallet the identity only
+lists is "controller not proven", and a wallet that isn't proven to be
+the agent's can't raise its verdict, however well it is protected.
 
 ```
 npx @adasouls/alma-verifier doctor \
@@ -50,8 +60,8 @@ npx @adasouls/alma-verifier doctor \
 |---|---|
 | `--wallet` | The address the agent's funds are at. |
 | `--signer` | An address whose key the agent's runtime holds. |
-| `--custody-signs` | A custody service signs for the agent, which holds no key. |
-| `--rpc`, `--allowance-module` | Where to read the chain, and the Safe Allowance Module's address on it. |
+| `--custody-signs` | A custody service signs for the agent, which holds no key. Your word, not checked: the report shows `CUSTODY-ENFORCED` as claimed, never as the verdict. |
+| `--rpc`, `--allowance-module` | Where to read the chain, and the Safe Allowance Module's address on it (one of its published deployments). Only a known Safe deployment counts as a Safe, and any other enabled module, a guard, or an allowance for an asset with no declared limit (the native token included) rules out `CHAIN-ENFORCED`. |
 | `--simulate <file>` | Read custody from a simulated chain instead (see below). |
 | `--org-rules <file>` | The organization's rules, to check the agent doesn't loosen them. |
 | `--sign` | Sign the report with the project's key and save it to `.alma/verification.json`. |
@@ -86,6 +96,11 @@ try {
   without a clear yes, it refuses.
 - The organization's rules can be passed as `rules`. They can only
   tighten.
+- Who is paid is resolved from `to`, through `.alma/counterparties.json`
+  (`[{ "id": "alma:…", "addresses": ["eip155:84532:0x…"] }]`) and the
+  `counterparties` option. A `counterparty` passed with the payment is a
+  claim: if `to` doesn't belong to it, the payment is refused, so a
+  prompt-injected call can't pair a trusted id with its own address.
 - If a payment goes out and its receipt can't be written, it throws
   `PaymentNotRecorded` with the transaction hash. Don't retry the payment.
 
@@ -193,7 +208,8 @@ enforces them.
   and since an unbound wallet can't raise a verdict, an agent looked up
   by id reads `ADVISORY` at most for now.
   For `alma_check_intent` the answer is the provider's own, since only
-  it knows what the agent spent through it today.
+  it knows what the agent spent through it today. The caller's
+  `counterparty` isn't passed on to it: the provider judges `to`.
 - Chains are read from the endpoints given at start-up:
   `--rpc eip155:84532=https://sepolia.base.org --allowance-module eip155:84532=0xModule…`.
   A caller never supplies a URL.

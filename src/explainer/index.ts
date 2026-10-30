@@ -201,6 +201,7 @@ export function plainReport(value: unknown): Report | undefined {
     generatedAt: text(r.generatedAt, 40),
     verdict: r.verdict as Verdict,
     meaning: text(r.meaning, 500),
+    ...(r.claimed && typeof r.claimed === "object" && (VERDICTS as readonly string[]).includes(r.claimed.verdict as string) ? { claimed: { verdict: r.claimed.verdict as Verdict, basis: text(r.claimed.basis, 300) } } : {}),
     rings,
     checks,
     scope: {

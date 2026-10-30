@@ -63,8 +63,14 @@ function identity(f: Facts): CheckResult[] {
   else if (!wallet) idn03 = result("IDN-03", "The wallet address is a bound controller of this soul", "high", "unknown", "No wallet address was given to verify.");
   else if (f.controllersUnknown) idn03 = result("IDN-03", "The wallet address is a bound controller of this soul", "high", "unknown", "Where this identity was read from doesn't say which wallets are bound to it.");
   else {
+    // The identity naming the wallet is the agent's claim. Only a signature from the wallet, checked on its chain, shows the wallet agrees.
     const bound = id.controllers.some((c) => c.type === "wallet" && same(c.value, wallet));
-    idn03 = result("IDN-03", "The wallet address is a bound controller of this soul", "high", bound ? "pass" : "fail", bound ? `${wallet} is bound to the identity.` : `${wallet} is not among the identity's wallet controllers: nothing ties these funds to this soul.`);
+    const proof = f.custody?.controllerProof;
+    const title = "The wallet address is a bound controller of this soul";
+    if (!bound) idn03 = result("IDN-03", title, "high", "fail", `${wallet} is not among the identity's wallet controllers: nothing ties these funds to this soul.`);
+    else if (proof === "valid") idn03 = result("IDN-03", title, "high", "pass", `${wallet} is bound to the identity, and a signature from it on ${f.custody!.chain} proves it accepts the binding.`);
+    else if (proof === "invalid") idn03 = result("IDN-03", title, "high", "fail", `${wallet} is listed as a controller, but its controller proof doesn't verify on ${f.custody!.chain}: it is not the wallet's signature.`);
+    else idn03 = { ...result("IDN-03", title, "high", "unknown", `Controller not proven: the identity lists ${wallet}, but nothing signed by that wallet shows it accepts the binding. Anyone can list a wallet.`), fix: FIXES["IDN-03"] };
   }
   return [idn01, idn02, idn03];
 }
@@ -127,14 +133,29 @@ function policy(f: Facts): CheckResult[] {
 
   const unlimited = assets.filter((a) => !rules.maxTransaction?.[a]);
   const unreadable = unreadableLimits(f);
+  const t01 = "Every allowed asset has a per-transaction limit";
+  // Without allowedAssets every asset is allowed (that is how the policy engine reads it), and the ones not named have no limit at all.
   const pol01 = unreadable.length
-    ? result("POL-01", "Every allowed asset has a per-transaction limit", "high", "fail", `Not a decimal amount, so not a limit: ${unreadable.join(", ")}.`)
+    ? result("POL-01", t01, "high", "fail", `Not a decimal amount, so not a limit: ${unreadable.join(", ")}.`)
     : none
-      ? result("POL-01", "Every allowed asset has a per-transaction limit", "high", "fail", "No limits are declared at all.")
-      : result("POL-01", "Every allowed asset has a per-transaction limit", "high", assets.length === 0 || unlimited.length ? "fail" : "pass", assets.length === 0 ? "No asset has a limit." : unlimited.length ? `No per-transaction limit for: ${unlimited.join(", ")}.` : `Limited: ${assets.map((a) => `${rules.maxTransaction![a]} ${a}`).join(", ")}.`);
+      ? result("POL-01", t01, "high", "fail", "No limits are declared at all.")
+      : !rules.allowedAssets
+        ? result("POL-01", t01, "high", "fail", `No allowedAssets: every asset is allowed, and any asset other than ${assets.length ? assets.join(", ") : "none"} can be paid in any amount.`)
+        : result("POL-01", t01, "high", assets.length === 0 || unlimited.length ? "fail" : "pass", assets.length === 0 ? "No asset has a limit." : unlimited.length ? `No per-transaction limit for: ${unlimited.join(", ")}.` : `Limited: ${assets.map((a) => `${rules.maxTransaction![a]} ${a}`).join(", ")}.`);
 
-  const dead = Object.entries(rules.humanApprovalThreshold ?? {}).filter(([a, t]) => rules.maxTransaction?.[a] && compare(t, rules.maxTransaction[a]) !== -1);
-  const pol02 = result("POL-02", "The human-approval threshold is below the per-transaction limit", "medium", !rules.humanApprovalThreshold ? "na" : dead.length ? "fail" : "pass", !rules.humanApprovalThreshold ? "No approval threshold is declared." : dead.length ? `Approval can never trigger for ${dead.map(([a]) => a).join(", ")}: the threshold is not below the limit.` : "A person is asked before the largest allowed payments.");
+  // Approval has to be able to trigger for every asset the agent may pay in: a threshold for one asset says nothing about another.
+  const t02 = "The human-approval threshold is below the per-transaction limit";
+  const thresholds = rules.humanApprovalThreshold ?? {};
+  const noThreshold = assets.filter((a) => !isAmount(thresholds[a]));
+  const dead = assets.filter((a) => isAmount(thresholds[a]) && isAmount(rules.maxTransaction?.[a]) && compare(thresholds[a], rules.maxTransaction![a]) !== -1);
+  const pol02 =
+    assets.length === 0 || Object.keys(thresholds).length === 0
+      ? result("POL-02", t02, "medium", "fail", "No approval threshold is declared: no payment ever needs a person's approval.")
+      : !rules.allowedAssets
+        ? result("POL-02", t02, "medium", "fail", "No allowedAssets: payments in assets without a threshold never need a person's approval.")
+        : noThreshold.length || dead.length
+          ? result("POL-02", t02, "medium", "fail", [noThreshold.length ? `No approval threshold for ${noThreshold.join(", ")}: approval can never trigger for it.` : "", dead.length ? `Approval can never trigger for ${dead.join(", ")}: the threshold is not below the limit.` : ""].filter(Boolean).join(" "))
+          : result("POL-02", t02, "medium", "pass", `A person is asked before the largest allowed payments: above ${assets.map((a) => `${thresholds[a]} ${a}`).join(", ")}.`);
 
   const small = Object.entries(rules.dailySpend ?? {}).filter(([a, d]) => rules.maxTransaction?.[a] && compare(d, rules.maxTransaction[a]) === -1);
   const pol03 = result("POL-03", "The daily limit is at least the per-transaction limit", "low", !rules.dailySpend ? "na" : small.length ? "fail" : "pass", !rules.dailySpend ? "No daily limit is declared." : small.length ? `For ${small.map(([a]) => a).join(", ")} the daily limit is below the per-transaction limit, so it silently replaces it.` : "Daily limits are at or above the per-transaction limits.");
@@ -195,18 +216,22 @@ function custody(f: Facts): CheckResult[] {
 
   const allowances = Object.entries(s.allowances).filter(([, a]) => gt(a.amount, "0"));
   const over = allowances.filter(([asset, a]) => !rules.dailySpend?.[asset] || gt(perDay(a), rules.dailySpend[asset]));
+  const unlisted = s.unlistedAllowances.filter((a) => a.baseUnits !== "0");
   const uncapped = Object.keys(rules.dailySpend ?? {}).filter((asset) => !s.allowances[asset] || !gt(s.allowances[asset].amount, "0"));
   let cus03: CheckResult;
   if (!signer) cus03 = r("CUS-03", "na", "The agent holds no signer to be a delegate.");
   else if (!s.allowanceModuleEnabled) cus03 = r("CUS-03", "fail", "The Allowance Module is not enabled on this Safe: nothing on-chain caps the agent.");
+  else if (s.otherModules.length) cus03 = r("CUS-03", "fail", `Other modules are enabled (${s.otherModules.join(", ")}): any of them can move the Safe's funds without an allowance.`);
+  else if (s.guard) cus03 = r("CUS-03", "fail", `A guard is set (${s.guard}): code this verifier doesn't know runs on the Safe's transactions, so it doesn't vouch for the Safe's rules.`);
   else if (isOwner) cus03 = r("CUS-03", "fail", "The agent's signer is an owner, so an allowance doesn't confine it.");
-  else if (allowances.length === 0) cus03 = r("CUS-03", "fail", "The Allowance Module is enabled but the agent's signer has no allowance.");
-  else if (over.length) cus03 = r("CUS-03", "fail", "An allowance is above the declared limit (see CUS-04).");
+  else if (allowances.length === 0 && unlisted.length === 0) cus03 = r("CUS-03", "fail", "The Allowance Module is enabled but the agent's signer has no allowance.");
+  else if (over.length || unlisted.length) cus03 = r("CUS-03", "fail", "An allowance is above the declared limit (see CUS-04).");
   else cus03 = r("CUS-03", "pass", `The chain caps the agent's signer: ${allowances.map(([asset, a]) => `${perDay(a)} ${asset} per day`).join(", ")}, within the declared daily limits.${uncapped.length ? ` No allowance for ${uncapped.join(", ")}: the agent can't spend those at all.` : ""} Per-transaction limits and approval thresholds are not enforced by the module.`);
 
-  const cus04 = !s.allowanceModuleEnabled || allowances.length === 0
+  const above = [...over.map(([asset, a]) => `${perDay(a)} ${asset} per day on-chain, ${rules.dailySpend?.[asset] ? `${rules.dailySpend[asset]} declared` : "no daily limit declared"}`), ...unlisted.map((a) => `${a.baseUnits} base units of ${a.token}, a token with no declared limit`)];
+  const cus04 = !s.allowanceModuleEnabled || (allowances.length === 0 && unlisted.length === 0)
     ? r("CUS-04", "na", "There are no on-chain allowances.")
-    : r("CUS-04", over.length ? "fail" : "pass", over.length ? `On-chain allowance above what is declared: ${over.map(([asset, a]) => `${perDay(a)} ${asset} per day on-chain, ${rules.dailySpend?.[asset] ? `${rules.dailySpend[asset]} declared` : "no daily limit declared"}`).join("; ")}.` : "Every on-chain allowance is at or below its declared daily limit.");
+    : r("CUS-04", above.length ? "fail" : "pass", above.length ? `On-chain allowance above what is declared: ${above.join("; ")}.` : "Every on-chain allowance is at or below its declared daily limit.");
 
   const stray = c.otherFunds.filter((o) => !same(o.address, c.wallet));
   const cus05 = r("CUS-05", stray.length ? "fail" : "pass", stray.length ? `Funds the agent can move without the Safe: ${stray.map((o) => `${o.amount} ${o.asset} at ${o.address}`).join(", ")}.` : "No funds at other addresses the agent can sign for.");

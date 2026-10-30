@@ -25,6 +25,12 @@ export const KNOWN_ASSETS: AssetInfo[] = [
   usdc("eip155:11155111", "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"),
 ];
 
+/** The address the Allowance Module uses for a chain's native token. */
+export const NATIVE_TOKEN = "0x0000000000000000000000000000000000000000";
+const NATIVE_SYMBOLS: Record<string, string> = { "eip155:137": "POL", "eip155:56": "BNB", "eip155:100": "XDAI", "eip155:43114": "AVAX" };
+/** A chain's native token (ETH on Ethereum and its rollups), as an asset with 18 decimals. */
+export const nativeAsset = (chain: string): AssetInfo => ({ symbol: NATIVE_SYMBOLS[chain] ?? "ETH", chain, id: `${chain}/native`, decimals: 18 });
+
 export const findAsset = (assets: AssetInfo[], chain: string, symbol: string) => assets.find((a) => a.chain === chain && a.symbol === symbol.toUpperCase());
 export const assetById = (assets: AssetInfo[], id: string) => assets.find((a) => a.id.toLowerCase() === id.toLowerCase());
 /** The token's contract address, for an ERC-20. */

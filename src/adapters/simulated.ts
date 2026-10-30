@@ -1,5 +1,7 @@
+import { toBaseUnits } from "@adasouls/alma-core";
+import { recoverMessageAddress, verifyMessage, type Hex } from "viem";
 import { add, compare, gt } from "../core/amounts.js";
-import type { AssetInfo } from "../core/assets.js";
+import { KNOWN_ASSETS, NATIVE_TOKEN, erc20Address, findAsset, nativeAsset, type AssetInfo } from "../core/assets.js";
 import type { Allowance } from "../core/types.js";
 import type { ChainReader } from "./chain.js";
 
@@ -18,7 +20,11 @@ export interface SimulatedAccount {
   owners?: string[];
   threshold?: number;
   allowanceModule?: boolean;
-  /** delegate -> symbol -> allowance. */
+  /** Modules enabled besides the Allowance Module. */
+  modules?: string[];
+  /** A guard set on the Safe. */
+  guard?: string;
+  /** delegate -> symbol -> allowance. A symbol the asset table doesn't know reads as an allowance for an unknown token. */
   allowances?: Record<string, Record<string, Allowance & { spent?: string; lastResetMinute?: number }>>;
 }
 
@@ -51,7 +57,8 @@ export class SimulatedChain implements ChainReader {
   readonly chain: string;
   private readonly accounts = new Map<string, SimulatedAccount>();
 
-  constructor(state: SimulatedState) {
+  /** `assets`: how symbols map to token addresses, as on a real chain. */
+  constructor(state: SimulatedState, private readonly assets: AssetInfo[] = KNOWN_ASSETS) {
     this.chain = state.chain ?? "eip155:31337";
     for (const [address, account] of Object.entries(state.accounts)) this.accounts.set(address.toLowerCase(), structuredClone(account));
   }
@@ -67,7 +74,7 @@ export class SimulatedChain implements ChainReader {
   async safe(address: string) {
     const a = this.at(address);
     if (a?.kind !== "safe") throw new Error(`${address} is not a Safe`);
-    return { owners: a.owners ?? [], threshold: a.threshold ?? 1, allowanceModuleEnabled: a.allowanceModule === true };
+    return { owners: a.owners ?? [], threshold: a.threshold ?? 1, allowanceModuleEnabled: a.allowanceModule === true, otherModules: a.modules ?? [], ...(a.guard ? { guard: a.guard } : {}) };
   }
 
   private entry(safe: string, delegate: string, symbol: string) {
@@ -76,9 +83,32 @@ export class SimulatedChain implements ChainReader {
     return key ? all[key][symbol] : undefined;
   }
 
-  async allowance(safe: string, delegate: string, asset: AssetInfo): Promise<Allowance> {
-    const e = this.entry(safe, delegate, asset.symbol);
-    return { amount: e?.amount ?? "0", resetMinutes: e?.resetMinutes ?? 0 };
+  async allowances(safe: string, delegate: string) {
+    const all = this.at(safe)?.allowances ?? {};
+    const key = Object.keys(all).find((d) => d.toLowerCase() === delegate.toLowerCase());
+    const native = nativeAsset(this.chain);
+    return Object.entries(key ? all[key] : {}).map(([symbol, e]) => {
+      const asset = symbol === native.symbol ? native : findAsset(this.assets, this.chain, symbol);
+      const token = asset === native ? NATIVE_TOKEN : (asset && erc20Address(asset)) ?? `unknown token ${symbol}`;
+      return { token, baseUnits: BigInt(toBaseUnits(e.amount, asset?.decimals ?? 18)), resetMinutes: e.resetMinutes };
+    });
+  }
+
+  /**
+   * A key's signature is checked by recovery, as on a real chain. A Safe's
+   * stands in for ERC-1271: signatures of at least `threshold` distinct
+   * owners over the message, 65 bytes each, one after the other.
+   */
+  async verifyMessage(address: string, message: string, signature: string) {
+    if (!/^0x([0-9a-fA-F]{130})+$/.test(signature)) return false;
+    const a = this.at(address);
+    if (a?.kind !== "safe") return a?.kind === "contract" ? false : verifyMessage({ address: address as Hex, message, signature: signature as Hex }).catch(() => false);
+    const signers = new Set<string>();
+    for (let i = 2; i < signature.length; i += 130) {
+      const signer = await recoverMessageAddress({ message, signature: `0x${signature.slice(i, i + 130)}` as Hex }).catch(() => undefined);
+      if (signer && (a.owners ?? []).some((o) => o.toLowerCase() === signer.toLowerCase())) signers.add(signer.toLowerCase());
+    }
+    return signers.size >= (a.threshold ?? 1);
   }
 
   async balance(address: string, asset: AssetInfo) {

@@ -1,4 +1,4 @@
-import type { CheckResult, Facts, Ring, Verdict } from "./types.js";
+import type { CheckResult, Facts, Report, Ring, Verdict } from "./types.js";
 
 /**
  * What protects the wallet that was looked at, whoever it belongs to:
@@ -6,15 +6,19 @@ import type { CheckResult, Facts, Ring, Verdict } from "./types.js";
  *   Module caps it at or below the declared limits, it can't reach the
  *   Safe on its own, and no funds sit where it can move them freely.
  * - custody: the agent holds no signer; a custody service signs after
- *   checking policy.
+ *   checking policy, and something other than the caller's word
+ *   established that (`custodyVerified`).
  */
-function enforcement(checks: CheckResult[], facts: Facts): { chain: boolean; custody: boolean } {
+function enforcement(checks: CheckResult[], facts: Facts): { chain: boolean; custody: boolean; custodyClaimed: boolean } {
   const status = (id: string) => checks.find((c) => c.id === id)?.status;
   const clean = (id: string) => status(id) === "pass" || status(id) === "na";
   const c = facts.custody;
+  // Who holds a key can't be read from a chain: a caller saying a custody service signs is a claim until something checks it.
+  const custodyClaimed = Boolean(c && c.agentSigner === undefined && c.signedBy === "custody" && status("CUS-05") !== "fail");
   return {
     chain: status("CUS-03") === "pass" && clean("CUS-02") && clean("CUS-04") && status("CUS-05") === "pass",
-    custody: Boolean(c && c.agentSigner === undefined && c.signedBy === "custody" && status("CUS-05") !== "fail"),
+    custody: custodyClaimed && c?.custodyVerified === true,
+    custodyClaimed,
   };
 }
 
@@ -31,7 +35,9 @@ function enforcement(checks: CheckResult[], facts: Facts): { chain: boolean; cus
  *   at somebody else's Safe and be called chain-enforced.
  * - ADVISORY: everything else. In particular whenever something couldn't
  *   be determined: "unknown" never raises a verdict, and that includes
- *   not knowing whether the wallet is the agent's.
+ *   not knowing whether the wallet is the agent's (a controller listed in
+ *   the identity with no signature from the wallet), and a custody
+ *   service the caller says signs, which nothing checked.
  */
 export function verdictOf(checks: CheckResult[], facts: Facts): Verdict {
   const status = (id: string) => checks.find((c) => c.id === id)?.status;
@@ -41,12 +47,19 @@ export function verdictOf(checks: CheckResult[], facts: Facts): Verdict {
   return enforced.chain ? "CHAIN-ENFORCED" : enforced.custody ? "CUSTODY-ENFORCED" : "ADVISORY";
 }
 
+/** A higher verdict the caller stated and nothing checked, when everything that could be checked supports it. */
+export function claimedOf(checks: CheckResult[], facts: Facts, verdict: Verdict): Report["claimed"] {
+  const status = (id: string) => checks.find((c) => c.id === id)?.status;
+  if (verdict !== "ADVISORY" || status("IDN-03") !== "pass" || !enforcement(checks, facts).custodyClaimed) return undefined;
+  return { verdict: "CUSTODY-ENFORCED", basis: "stated by the caller, not checked: a custody service signs for the agent" };
+}
+
 /** The three rings between the agent and the funds, and the state of each for the wallet that was looked at. */
 export function ringsOf(checks: CheckResult[], facts: Facts, verdict: Verdict): Ring[] {
   const status = (id: string) => checks.find((c) => c.id === id)?.status;
   const c = facts.custody;
   const enforced = enforcement(checks, facts);
-  const custody: Ring["state"] = !c ? "unknown" : enforced.custody ? "in place" : "missing";
+  const custody: Ring["state"] = !c ? "unknown" : enforced.custody ? "in place" : enforced.custodyClaimed ? "unknown" : "missing";
   const chain: Ring["state"] = !c ? "unknown" : enforced.chain ? "in place" : status("CUS-04") === "fail" || (c.safe?.allowanceModuleEnabled && status("CUS-03") === "fail") ? "misconfigured" : "missing";
   return [
     // Whether the agent's code calls a guard can't be seen from outside: declared limits are the most that can be said.

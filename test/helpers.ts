@@ -3,14 +3,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalSigner, createDelegation, createIdentity, type AlmaIdentity, type Delegation } from "@adasouls/alma-core";
 import { buildManifest, stringifyManifest, type AgentManifest, type ManifestSelfPolicyRules } from "@adasouls/alma-manifest";
-import type { CustodyFacts, Facts } from "../src/core/types.js";
+import { privateKeyToAccount } from "viem/accounts";
+import { controllerProofMessage } from "../src/adapters/chain.js";
+import type { ControllerProof, CustodyFacts, Facts } from "../src/core/types.js";
 
 export const NOW = new Date("2026-10-07T12:00:00Z");
 export const ORG = "alma:main:org:acme";
 export const WALLET = "0x1111111111111111111111111111111111111111";
 export const SIGNER = "0x2222222222222222222222222222222222222222";
-export const OWNER_A = "0x3333333333333333333333333333333333333333";
-export const OWNER_B = "0x4444444444444444444444444444444444444444";
+/** The Safe's owners: keys, so tests can sign as them. */
+export const OWNER_KEYS = [privateKeyToAccount(`0x${"a1".repeat(32)}`), privateKeyToAccount(`0x${"b2".repeat(32)}`)];
+export const OWNER_A = OWNER_KEYS[0].address;
+export const OWNER_B = OWNER_KEYS[1].address;
 export const PAYEE = "0x5555555555555555555555555555555555555555";
 
 export const LIMITS: ManifestSelfPolicyRules = { maxTransaction: { USDC: "100" }, dailySpend: { USDC: "500" }, humanApprovalThreshold: { USDC: "50" }, allowedAssets: ["USDC"] };
@@ -33,19 +37,28 @@ export function connected(overrides: Partial<Facts> = {}): Facts {
   return { identity, delegations: [delegation(identity)], manifest: manifest(), now: NOW, ...overrides };
 }
 
-export const eoa = (): CustodyFacts => ({ chain: "eip155:31337", wallet: WALLET, walletKind: "eoa", agentSigner: WALLET, otherFunds: [] });
+/** Custody facts read from a chain, with the wallet's controller proof checked there and valid, unless said otherwise. */
+export const eoa = (): CustodyFacts => ({ chain: "eip155:31337", wallet: WALLET, walletKind: "eoa", agentSigner: WALLET, controllerProof: "valid", otherFunds: [] });
 export const safe = (over: Partial<NonNullable<CustodyFacts["safe"]>> = {}, more: Partial<CustodyFacts> = {}): CustodyFacts => ({
   chain: "eip155:31337",
   wallet: WALLET,
   walletKind: "safe",
   agentSigner: SIGNER,
+  controllerProof: "valid",
   otherFunds: [],
-  safe: { owners: [OWNER_A, OWNER_B], threshold: 2, allowanceModuleEnabled: true, allowances: { USDC: { amount: "500", resetMinutes: 1440 } }, ...over },
+  safe: { owners: [OWNER_A, OWNER_B], threshold: 2, allowanceModuleEnabled: true, otherModules: [], allowances: { USDC: { amount: "500", resetMinutes: 1440 } }, unlistedAllowances: [], ...over },
   ...more,
 });
 
-/** A project on disk, in the files the ALMA CLI writes. */
-export async function project(options: { rules?: ManifestSelfPolicyRules; counterparty?: boolean; name?: string } = {}): Promise<{ cwd: string; identity: AlmaIdentity; signer: LocalSigner }> {
+/** The wallet accepting the binding: signed by each of `signers`, one signature after the other (a Safe's owners, or the key itself). */
+export async function controllerProof(almaId: string, wallet = WALLET, chain = "eip155:31337", signers = OWNER_KEYS): Promise<ControllerProof> {
+  const message = controllerProofMessage(almaId, wallet, chain);
+  const sigs = await Promise.all(signers.map((k) => k.signMessage({ message })));
+  return { v: "alma-controller-proof/1", almaId, wallet, chain, signature: `0x${sigs.map((s) => s.slice(2)).join("")}` };
+}
+
+/** A project on disk, in the files the ALMA CLI writes. Unless `proven: false`, WALLET has signed a controller proof on the simulated chain. */
+export async function project(options: { rules?: ManifestSelfPolicyRules; counterparty?: boolean; name?: string; proven?: boolean } = {}): Promise<{ cwd: string; identity: AlmaIdentity; signer: LocalSigner }> {
   const cwd = mkdtempSync(join(tmpdir(), "alma-verifier-"));
   const identity = agent({ name: options.name });
   const signer = await LocalSigner.generate();
@@ -54,5 +67,6 @@ export async function project(options: { rules?: ManifestSelfPolicyRules; counte
   writeFileSync(join(cwd, ".alma", "delegations.json"), JSON.stringify([delegation(identity, options.rules ?? LIMITS)]));
   writeFileSync(join(cwd, ".alma", "issuer.key"), await signer.exportPkcs8(), { mode: 0o600 });
   writeFileSync(join(cwd, "alma.yaml"), stringifyManifest(manifest(options.rules ?? LIMITS, options.name, options.counterparty ?? false)));
+  if (options.proven !== false) writeFileSync(join(cwd, ".alma", "controller-proofs.json"), JSON.stringify([await controllerProof(identity.id)]));
   return { cwd, identity, signer };
 }
