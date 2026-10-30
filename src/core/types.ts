@@ -59,15 +59,51 @@ export interface CustodyFacts {
   agentSigner?: string;
   /** Who signs the agent's payments when it holds no key: the custody service checks policy before signing. */
   signedBy?: "custody";
+  /**
+   * True only when `signedBy` was established by something that checked
+   * it, not by a caller's word. Nothing in this package can check it yet,
+   * so a caller's `--custody-signs` leaves it unset and the report shows
+   * CUSTODY-ENFORCED as claimed, never as the verdict.
+   */
+  custodyVerified?: boolean;
+  /**
+   * A signature from the wallet over the controller-proof message for this
+   * identity and chain: "valid" when the chain confirmed it (ecrecover for
+   * a key, ERC-1271 for a Safe), "invalid" when it didn't. Undefined: no
+   * proof was given, and the binding in the identity is only a claim.
+   */
+  controllerProof?: "valid" | "invalid";
   safe?: {
     owners: string[];
     threshold: number;
     allowanceModuleEnabled: boolean;
-    /** The agent signer's allowances, by asset symbol. */
+    /** Enabled modules other than the Allowance Module. Any one of them can move the Safe's funds without an allowance. */
+    otherModules: string[];
+    /** A transaction guard or module guard, when one is set. */
+    guard?: string;
+    /** The agent signer's allowances, by asset symbol (the native token included). */
     allowances: Record<string, Allowance>;
+    /** Allowances for tokens the asset table doesn't know, so they can't be read as amounts: base units, by token address. */
+    unlistedAllowances: { token: string; baseUnits: string; resetMinutes: number }[];
   };
   /** Funds at other addresses the agent can sign for (its own key, other controllers), by asset symbol. */
   otherFunds: { address: string; asset: string; amount: string }[];
+}
+
+/**
+ * A wallet's signature over `controllerProofMessage(almaId, wallet,
+ * chain)`. The identity naming a wallet is the agent's claim; this is the
+ * wallet agreeing. It names the chain, because a Safe at the same address
+ * on another chain can have other owners.
+ */
+export interface ControllerProof {
+  v: "alma-controller-proof/1";
+  almaId: string;
+  wallet: string;
+  /** CAIP-2. */
+  chain: string;
+  /** Hex: an EIP-191 signature for a key, or whatever the wallet's ERC-1271 accepts for a contract. */
+  signature: string;
 }
 
 export interface HistoryFacts {
@@ -91,6 +127,8 @@ export interface Facts {
   identity?: AlmaIdentity;
   /** True when the source of the identity doesn't say which wallets are bound to it: IDN-03 is then "unknown", never a pass. */
   controllersUnknown?: boolean;
+  /** Signatures from wallets proving they accept being bound to this identity (`.alma/controller-proofs.json`). Checked against the chain when custody is read. */
+  controllerProofs?: ControllerProof[];
   delegations: Delegation[];
   /** The agent's declared limits (alma.yaml). */
   manifest?: AgentManifest;
@@ -123,6 +161,11 @@ export interface Report {
   generatedAt: string;
   verdict: Verdict;
   meaning: string;
+  /**
+   * A higher level the caller stated and nothing checked (today: a custody
+   * service signing). Shown next to the verdict, never as it.
+   */
+  claimed?: { verdict: Verdict; basis: string };
   rings: Ring[];
   checks: CheckResult[];
   /** What the verification looked at, so a reader knows its reach. */

@@ -69,7 +69,7 @@ export function createMcpServer(verifier: Verifier, apiKey?: string): McpServer 
         asset: z.string().describe('The asset\'s symbol, e.g. "USDC".'),
         to: z.string().describe("The address that would receive the funds."),
         chain: z.string().optional().describe("CAIP-2 id of the payment's chain. Required with projectDir."),
-        counterparty: z.string().optional().describe("The payee's ALMA id, when it has one."),
+        counterparty: z.string().optional().describe("The payee's ALMA id, when it has one. Checked against `to`: a payment whose address doesn't belong to this id is refused."),
       },
       annotations: { readOnlyHint: true },
     },

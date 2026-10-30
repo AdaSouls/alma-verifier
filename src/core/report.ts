@@ -1,18 +1,20 @@
 import { canonicalJsonValue, jsonDigest, type IssuerKeyset, type IssuerSigner } from "@adasouls/alma-core";
 import { runChecks } from "./checks.js";
 import { REPORT_VERSION, VERDICTS, VERDICT_MEANING, type Facts, type Report, type Verdict } from "./types.js";
-import { ringsOf, verdictOf } from "./verdict.js";
+import { claimedOf, ringsOf, verdictOf } from "./verdict.js";
 
 /** Runs every check and assembles the report. Deterministic: the same facts give the same report, apart from its time. */
 export async function verify(facts: Facts, sources: string[] = [], simulated = false): Promise<Report> {
   const checks = await runChecks(facts);
   const verdict = verdictOf(checks, facts);
+  const claimed = claimedOf(checks, facts, verdict);
   return {
     v: REPORT_VERSION,
     subject: facts.identity?.id ?? null,
     generatedAt: facts.now.toISOString().replace(/\.\d{3}Z$/, "Z"),
     verdict,
     meaning: VERDICT_MEANING[verdict],
+    ...(claimed ? { claimed } : {}),
     rings: ringsOf(checks, facts, verdict),
     checks,
     scope: { wallet: facts.custody?.wallet ?? null, chain: facts.custody?.chain ?? null, sources, simulated },

@@ -10,7 +10,11 @@ export interface PaymentIntent {
   amount: string;
   /** CAIP-2, e.g. "eip155:84532". */
   chain: string;
-  /** Who is being paid: an ALMA id when it has one. */
+  /**
+   * Who the caller says is being paid: an ALMA id. A claim, never used as
+   * the counterparty: who is paid is resolved from `to`, and a claim that
+   * doesn't match that is refused.
+   */
   counterparty?: string;
   /** Defaults to "pay". */
   capability?: string;
@@ -27,7 +31,7 @@ export interface IntentInput {
    */
   rules: SelfPolicyRules[];
   counterpartyPolicy?: CounterpartyPolicyRules;
-  /** What is known about the counterparty. Left out, rules that need it deny. */
+  /** The counterparty `to` resolves to, from a source the agent's caller doesn't control. Left out, rules that need it deny. */
   counterparty?: CounterpartyContext;
   /** Spent so far today, per asset symbol. */
   spentToday: Record<string, string>;
@@ -44,6 +48,10 @@ export function checkIntent(input: IntentInput, intent: PaymentIntent): IntentDe
   const capability = intent.capability ?? "pay";
   if (!input.capabilities.includes(capability)) return { decision: "deny", reasons: [`"${capability}" has not been delegated to this agent`] };
   if (!/^\d+(\.\d+)?$/.test(intent.amount)) return { decision: "deny", reasons: [`amount "${intent.amount}" is not a decimal amount`] };
+  // The id and the address can both come from a prompt-injected tool call: the address is what gets paid, so the id must match it.
+  if (intent.counterparty !== undefined && intent.counterparty !== input.counterparty?.id) {
+    return { decision: "deny", reasons: [input.counterparty ? `${intent.to} belongs to ${input.counterparty.id}, not ${intent.counterparty}` : `${intent.to} isn't known to belong to ${intent.counterparty}`] };
+  }
 
   const scope = { agentId: input.agentId };
   const policies: Policy[] = input.rules.map((rules, i) => ({ id: `self-${i}`, kind: "self", version: 1, scope, rules }));
@@ -52,7 +60,7 @@ export function checkIntent(input: IntentInput, intent: PaymentIntent): IntentDe
   const evaluation = evaluatePolicy(policies, {
     agentId: input.agentId,
     intent: { capability, asset: intent.asset.toUpperCase(), amount: intent.amount, chain: intent.chain },
-    counterparty: input.counterparty ?? (intent.counterparty ? { id: intent.counterparty } : undefined),
+    counterparty: input.counterparty,
     dailySpendSoFar: input.spentToday,
     now: input.now,
   });

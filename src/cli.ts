@@ -12,9 +12,9 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { Command } from "commander";
 import { LocalSigner, createIssuerKeyset } from "@adasouls/alma-core";
 import { readAgent } from "./adapters/api.js";
-import { readCustody, type ChainReader } from "./adapters/chain.js";
+import { controllerProofMessage, readCustody, type ChainReader } from "./adapters/chain.js";
 import { evmReader } from "./adapters/evm.js";
-import { loadSigner, localIssuer, readIdentity, readManifest, readProject, readRulesFile, storeDir } from "./adapters/local.js";
+import { loadSigner, localIssuer, readControllerProofs, readIdentity, readManifest, readProject, readRulesFile, storeDir } from "./adapters/local.js";
 import { SimulatedChain, type SimulatedState } from "./adapters/simulated.js";
 import { KNOWN_ASSETS, type AssetInfo } from "./core/assets.js";
 import { declaredRules } from "./core/checks.js";
@@ -35,12 +35,14 @@ const GROUPS: [string, string][] = [["IDN", "Identity"], ["AUT", "Authority"], [
 export function render(report: Report): string {
   const lines: string[] = [];
   const colour = report.verdict === "CHAIN-ENFORCED" || report.verdict === "CUSTODY-ENFORCED" ? green : report.verdict === "ADVISORY" ? yellow : red;
-  lines.push("", `${bold("Verdict")}  ${colour(bold(report.verdict))}`, `         ${report.meaning}`, `${bold("Agent")}    ${report.subject ?? "none"}`);
+  lines.push("", `${bold("Verdict")}  ${colour(bold(report.verdict))}`, `         ${report.meaning}`);
+  if (report.claimed) lines.push(`${bold("Claimed")}  ${yellow(report.claimed.verdict)}  ${dim(`(${report.claimed.basis})`)}`);
+  lines.push(`${bold("Agent")}    ${report.subject ?? "none"}`);
   if (report.scope.wallet) lines.push(`${bold("Wallet")}   ${report.scope.wallet} on ${report.scope.chain}`);
   lines.push("", bold("What stands between this agent and the funds"));
   for (const ring of report.rings) lines.push(`  Ring ${ring.ring}  ${ring.name}: ${ring.state === "in place" ? green(ring.state) : ring.state === "unknown" ? yellow("can't be seen from here") : red(ring.state)}  ${dim(`(stops ${ring.stops})`)}`);
   if (report.verdict === "ADVISORY" && report.rings.some((r) => r.ring > 1 && r.state === "in place")) {
-    lines.push("", yellow("  This wallet is protected, but it isn't shown to be this agent's (IDN-03), so the verdict stays ADVISORY."));
+    lines.push("", yellow("  This wallet is protected, but it isn't proven to be this agent's (IDN-03), so the verdict stays ADVISORY."));
   }
   for (const [prefix, name] of GROUPS) {
     lines.push("", bold(name));
@@ -86,7 +88,7 @@ async function doctor(o: DoctorOptions): Promise<void> {
     try {
       let reader: ChainReader;
       if (o.simulate) {
-        reader = new SimulatedChain(JSON.parse(readFileSync(o.simulate, "utf-8")));
+        reader = new SimulatedChain(JSON.parse(readFileSync(o.simulate, "utf-8")), assets);
         sources.push("simulated chain (a file, not a network)");
       } else if (o.rpc) {
         reader = await evmReader({ rpcUrl: o.rpc, allowanceModule: o.allowanceModule });
@@ -94,7 +96,9 @@ async function doctor(o: DoctorOptions): Promise<void> {
       } else throw new Error("no chain to read it from was given (--rpc, or --simulate for a simulated one)");
       const rules = declaredRules(facts);
       const symbols = [...new Set([...(rules.allowedAssets ?? []), ...Object.keys(rules.maxTransaction ?? {}), ...Object.keys(rules.dailySpend ?? {})])];
-      facts.custody = await readCustody(reader, { wallet: o.wallet, agentSigner: o.signer, signedBy: o.custodySigns ? "custody" : undefined, symbols, assets });
+      facts.custody = await readCustody(reader, { wallet: o.wallet, agentSigner: o.signer, signedBy: o.custodySigns ? "custody" : undefined, symbols, assets, almaId: facts.identity?.id, controllerProofs: facts.controllerProofs });
+      if (o.custodySigns) sources.push("stated by the caller, not checked: a custody service signs for the agent (shown as claimed, never as the verdict)");
+      if (o.signer) sources.push(`stated by the caller, not checked: the agent's runtime holds the key of ${o.signer}`);
     } catch (err) {
       facts.custodyUnreadable = (err instanceof Error ? err.message : String(err)).split("\n")[0];
     }
@@ -159,6 +163,35 @@ program
     else if (decision.decision === "needs_approval") console.log(`${yellow("needs approval")}  a person must approve it first`);
     else console.log(`${red("deny")}  ${decision.reasons.join("; ")}`);
     if (decision.decision === "deny") process.exitCode = 1;
+  });
+
+program
+  .command("controller-proof")
+  .description("Prove the wallet accepts being bound to this project's identity: prints the message to sign with it, and saves the signature.")
+  .requiredOption("--wallet <address>", "the wallet listed as a controller (alma connect --wallet)")
+  .requiredOption("--chain <caip2>", "the chain the wallet is on, e.g. eip155:84532: a Safe's owners differ between chains")
+  .option("--signature <hex>", "the wallet's EIP-191 signature of the message (for a Safe, what its owners signed through it)")
+  .option("--cwd <dir>", "the project's folder", ".")
+  .action((o: { wallet: string; chain: string; signature?: string; cwd: string }) => {
+    const cwd = resolve(o.cwd);
+    if (!/^0x[0-9a-fA-F]{40}$/.test(o.wallet)) throw new Error("--wallet: an address");
+    if (!/^[-a-z0-9]{3,8}:[-_a-zA-Z0-9]{1,32}$/.test(o.chain)) throw new Error("--chain: a CAIP-2 id, e.g. eip155:84532");
+    const identity = readIdentity(cwd);
+    if (!identity) throw new Error("this project has no ALMA identity: run `alma connect --wallet` first");
+    const message = controllerProofMessage(identity.id, o.wallet, o.chain);
+    if (!o.signature) {
+      console.log(`${bold("Sign this message with")} ${o.wallet} ${dim("(personal_sign / EIP-191; for a Safe, sign it as a Safe message)")}\n`);
+      console.log(message);
+      console.log(dim(`\nThen: alma-verifier controller-proof --wallet ${o.wallet} --chain ${o.chain} --signature 0x…`));
+      if (!identity.controllers.some((c) => c.type === "wallet" && c.value.toLowerCase() === o.wallet.toLowerCase())) console.log(yellow(`\n! ${o.wallet} isn't listed as a controller of ${identity.id} yet: run \`alma connect --wallet ${o.wallet}\` too.`));
+      return;
+    }
+    if (!/^0x([0-9a-fA-F]{2})+$/.test(o.signature)) throw new Error("--signature: hex, starting with 0x");
+    const proofs = readControllerProofs(cwd).filter((p) => !(p.almaId === identity.id && p.chain === o.chain && p.wallet.toLowerCase() === o.wallet.toLowerCase()));
+    proofs.push({ v: "alma-controller-proof/1", almaId: identity.id, wallet: o.wallet, chain: o.chain, signature: o.signature });
+    mkdirSync(storeDir(cwd), { recursive: true });
+    writeFileSync(join(storeDir(cwd), "controller-proofs.json"), JSON.stringify(proofs, null, 2) + "\n", "utf-8");
+    console.log(`${green("✓")} Saved to .alma/controller-proofs.json. ${dim("Not checked yet: `doctor --wallet … --rpc …` checks it against the chain.")}`);
   });
 
 program
@@ -354,7 +387,7 @@ program
     let chain: string | undefined;
     const chains: NonNullable<VerifierOptions["chains"]> = {};
     const simulated = o.simulate ? (JSON.parse(readFileSync(o.simulate, "utf-8")) as SimulatedState) : undefined;
-    if (simulated) chain = new SimulatedChain(simulated).chain;
+    if (simulated) chain = new SimulatedChain(simulated, []).chain;
     else if (o.rpc) {
       chain = (await evmReader({ rpcUrl: o.rpc, allowanceModule: o.allowanceModule })).chain;
       chains[chain] = { rpcUrl: o.rpc, allowanceModule: o.allowanceModule };
